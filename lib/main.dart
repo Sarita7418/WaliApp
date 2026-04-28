@@ -1,19 +1,16 @@
+// lib/main.dart
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'screens/splash_screen.dart'; // Importamos la nueva pantalla de carga
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Cargar variables de entorno
   await dotenv.load(fileName: ".env");
-
-  // Inicializar la conexión central con Supabase
   await Supabase.initialize(
     url: dotenv.env['SUPABASE_URL']!,
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
-
   runApp(const WaliApp());
 }
 
@@ -26,15 +23,18 @@ class WaliApp extends StatelessWidget {
       title: 'Wali App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        // Usamos el Turquesa de Aventuras Paceñas como color principal
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF0F988A)), 
         useMaterial3: true,
-      ),
-      home: const Scaffold(
-        body: Center(
-          child: Text('Wali App conectada. ¡Todo listo para el Login y Menú!'),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF0F988A),
+          primary: const Color(0xFF0F988A),
+          secondary: const Color(0xFFFF7043),
+          tertiary: const Color(0xFFFFCA28),
+        ),
+        textTheme: const TextTheme(
+          headlineMedium: TextStyle(fontWeight: FontWeight.bold, color: Colors.black87),
         ),
       ),
+      home: const SplashScreen(), // La app arranca aquí
     );
   }
 }
