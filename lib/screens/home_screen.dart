@@ -3,7 +3,8 @@ import 'explore_view.dart';
 import 'itinerary_view.dart';
 import 'chat_view.dart';
 import 'profile_view.dart';
-import 'gastro_view.dart'; // Ahora se llamará desde el "+"
+import 'rates_view.dart';
+import 'ocr_view.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,10 +18,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // Los 4 pilares de la barra inferior (dejando el centro para el +)
   final List<Widget> _views = [
-    const ExploreView(),   // 0
+    const ExploreView(), // 0
     const ItineraryView(), // 1
-    const ChatView(),      // 2
-    const ProfileView(),   // 3
+    const ChatView(), // 2
+    const ProfileView(), // 3
+    const RatesView(),     // 4 (Nueva)
+    const OcrView(),       // 5 (Nueva)
   ];
 
   // Colores de tu marca WALI
@@ -28,42 +31,53 @@ class _HomeScreenState extends State<HomeScreen> {
   final Color brandOrange = const Color(0xFFF57C00);
 
   // Función para abrir el menú de módulos faltantes
+  // Función para abrir el menú de módulos específicos
   void _showModulesMenu() {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
       builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.5,
+        height: MediaQuery.of(context).size.height * 0.4,
         decoration: const BoxDecoration(
-          color: Color(0xFFF2FBFF), // Fondo celeste muy claro (surface)
-          borderRadius: BorderRadius.vertical(top: Radius.circular(30)),
+          color: Color(0xFFF2FBFF),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(35)),
         ),
         child: Column(
           children: [
-            const SizedBox(height: 15),
-            Container(width: 45, height: 5, decoration: BoxDecoration(color: Colors.black12, borderRadius: BorderRadius.circular(10))),
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 20),
-              child: Text("Módulos Adicionales", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF00685E))),
+            // Botón cerrar centrado (el que ya hicimos)
+            const SizedBox(height: 12),
+            Center(
+              child: GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 50, height: 50,
+                  decoration: BoxDecoration(color: brandTeal.withValues(alpha: 0.15), shape: BoxShape.circle),
+                  child: Icon(Icons.keyboard_arrow_down_rounded, color: brandTeal, size: 40),
+                ),
+              ),
             ),
+
+            const SizedBox(height: 20),
+
             Expanded(
               child: GridView.count(
                 crossAxisCount: 3,
                 padding: const EdgeInsets.symmetric(horizontal: 20),
-                mainAxisSpacing: 20,
                 children: [
-                  // Módulo Gastro (que pediste integrar)
-                  _buildModuleItem(Icons.restaurant, "Gastronomía", const Color(0xFFE64A19), () {
+                  // --- AHORA USAMOS SETSTATE EN LUGAR DE NAVIGATOR.PUSH ---
+                  _buildModuleItem(Icons.route_rounded, "Itinerarios", brandTeal, () {
                     Navigator.pop(context);
-                    Navigator.push(context, MaterialPageRoute(builder: (context) => const GastroView()));
+                    setState(() => _currentIndex = 1); // Va a la pestaña 1
                   }),
-                  // Módulos que faltaban según tu diseño HTML
-                  _buildModuleItem(Icons.museum, "Cultura", Colors.brown, () {}),
-                  _buildModuleItem(Icons.translate, "Traductor", Colors.blueAccent, () {}),
-                  _buildModuleItem(Icons.emergency_share, "S.O.S", Colors.red, () {}),
-                  _buildModuleItem(Icons.history_edu, "Historia", Colors.amber, () {}),
-                  _buildModuleItem(Icons.settings_outlined, "Ajustes", Colors.grey, () {}),
+                  _buildModuleItem(Icons.payments_outlined, "Tarifas", brandOrange, () {
+                    Navigator.pop(context);
+                    setState(() => _currentIndex = 4); // Va a la pestaña 4
+                  }),
+                  _buildModuleItem(Icons.camera_alt_rounded, "Cámara OCR", const Color(0xFFE64A19), () {
+                    Navigator.pop(context);
+                    setState(() => _currentIndex = 5); // Va a la pestaña 5
+                  }),
                 ],
               ),
             ),
@@ -73,7 +87,12 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildModuleItem(IconData icon, String label, Color color, VoidCallback onTap) {
+  Widget _buildModuleItem(
+    IconData icon,
+    String label,
+    Color color,
+    VoidCallback onTap,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -84,7 +103,10 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Icon(icon, color: color, size: 28),
           ),
           const SizedBox(height: 8),
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+          ),
         ],
       ),
     );
@@ -94,10 +116,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       // Usamos IndexedStack para que no se pierda el progreso al cambiar de pestaña
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _views,
-      ),
+      body: IndexedStack(index: _currentIndex, children: _views),
 
       // BOTÓN CENTRAL "+" (Explora)
       floatingActionButton: FloatingActionButton(
@@ -139,7 +158,14 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon, color: isSelected ? brandTeal : Colors.black38, size: 26),
-          Text(label, style: TextStyle(color: isSelected ? brandTeal : Colors.black38, fontSize: 10, fontWeight: FontWeight.bold)),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? brandTeal : Colors.black38,
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
         ],
       ),
     );
