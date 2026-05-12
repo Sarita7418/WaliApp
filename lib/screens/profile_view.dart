@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart'; // <-- Añade esto
 import 'login_screen.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
@@ -362,5 +363,30 @@ class _ProfileViewState extends State<ProfileView> {
     TextButton(onPressed: _signOut, child: const Text("Cerrar Sesión", style: TextStyle(color: Colors.redAccent))),
   ]));
 
-  Future<void> _signOut() async { await Supabase.instance.client.auth.signOut(); if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen())); }
+  Future<void> _signOut() async { 
+    try {
+      // 1. Limpiamos la caché nativa de Google (Esto fuerza el selector de cuentas)
+      final googleSignIn = GoogleSignIn();
+      if (await googleSignIn.isSignedIn()) {
+        await googleSignIn.signOut();
+      }
+
+      // 2. Cerramos la sesión en el backend (Supabase)
+      await Supabase.instance.client.auth.signOut(); 
+
+      // 3. Volvemos a la pantalla de Login
+      if (mounted) {
+        Navigator.pushReplacement(
+          context, 
+          MaterialPageRoute(builder: (_) => const LoginScreen())
+        ); 
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error al cerrar sesión: $e')),
+        );
+      }
+    }
+  }
 }

@@ -37,6 +37,7 @@ dependencies:
   supabase_flutter: ^2.12.4
   flutter_dotenv: ^6.0.0
   image_picker: ^1.2.2
+  google_sign_in: ^6.2.1
 
 dev_dependencies:
   flutter_test:
