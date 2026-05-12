@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:google_sign_in/google_sign_in.dart';// <-- Importante: Añadimos Google Sign In
 import 'home_screen.dart';
 import 'register_screen.dart';
 import 'welcome_screen.dart';
 import 'forgot_password_screen.dart';
-
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -159,7 +159,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     const SizedBox(height: 15),
 
-                    // BOTÓN INICIAR SESIÓN
+                    // BOTÓN INICIAR SESIÓN (Normal)
                     SizedBox(
                       width: double.infinity,
                       height: 55,
@@ -184,7 +184,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                     const SizedBox(height: 25),
 
-                    // BOTÓN GOOGLE VISUAL
+                    // BOTÓN GOOGLE (Ahora conectado a la función)
                     SizedBox(
                       width: double.infinity,
                       height: 55,
@@ -195,12 +195,15 @@ class _LoginScreenState extends State<LoginScreen> {
                             borderRadius: BorderRadius.circular(15),
                           ),
                         ),
-                        onPressed: () {},
+                        onPressed: _isLoading
+                            ? null
+                            : _signInWithGoogle, // <-- Conectado aquí
                         child: const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.account_circle_outlined,
+                              Icons
+                                  .account_circle_outlined, // Aquí podrías poner el logo de Google luego si quieres
                               color: Colors.black54,
                             ),
                             SizedBox(width: 12),
@@ -289,7 +292,6 @@ class _LoginScreenState extends State<LoginScreen> {
         password: _passwordController.text.trim(),
       );
 
-      // Corregido: Agregamos llaves { }
       if (mounted) {
         Navigator.pushReplacement(
           context,
@@ -297,17 +299,100 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
     } catch (e) {
-      // Corregido: Agregamos llaves { }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Credenciales incorrectas")),
         );
       }
     } finally {
-      // Corregido: Agregamos llaves { }
       if (mounted) {
         setState(() => _isLoading = false);
       }
+    }
+  }
+
+  // --- LÓGICA COMPLETA DE GOOGLE ---
+  // --- LÓGICA COMPLETA DE GOOGLE ---
+  Future<void> _signInWithGoogle() async {
+    try {
+      setState(() => _isLoading = true);
+
+      // 1. TU ID DE APLICACIÓN WEB DE GOOGLE CLOUD
+      const webClientId = '958561798841-4b7vvh6svt49qlmvo5br7fsp5h4jn6ti.apps.googleusercontent.com';
+
+      // 2. INICIALIZACIÓN CORRECTA
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: webClientId,
+      );
+
+      // 3. ABRIR POP-UP
+      final googleUser = await googleSignIn.signIn();
+      
+      if (googleUser == null) {
+        setState(() => _isLoading = false);
+        return; 
+      }
+
+      // 4. OBTENER TOKENS
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+      final accessToken = googleAuth.accessToken;
+
+      if (idToken == null) {
+        throw 'No se pudo obtener el ID Token de Google.';
+      }
+
+      // 5. INICIAR SESIÓN EN SUPABASE
+      final response = await Supabase.instance.client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+        accessToken: accessToken, 
+      );
+
+      // 6. VERIFICAR USUARIO EN TABLA PERSONAS
+      if (response.user != null) {
+        await _checkAndCreateUserRecord(response.user!);
+        
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const HomeScreen()),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error con Google: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _checkAndCreateUserRecord(User user) async {
+    final client = Supabase.instance.client;
+
+    final existingUser = await client
+        .from('personas')
+        .select('id')
+        .eq('id_usuario', user.id)
+        .maybeSingle();
+
+    if (existingUser == null) {
+      final fullName = user.userMetadata?['full_name'] ?? '';
+      List<String> names = fullName.split(' ');
+      String name = names.isNotEmpty ? names[0] : 'Explorer';
+      String lastName = names.length > 1 ? names.sublist(1).join(' ') : '';
+
+      await client.from('personas').insert({
+        'id_usuario': user.id,
+        'nombres': name,
+        'apellido_paterno': lastName,
+        'id_idioma_fav': 201,
+        'id_sistema_medida': 301,
+      });
     }
   }
 }
