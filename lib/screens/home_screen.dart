@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'explore_view.dart';
 import 'itinerary_view.dart';
+import 'diary_screen.dart'; // Importado para la lógica dinámica
 import 'routes_view.dart';
 import 'chat_view.dart';
 import 'profile_view.dart';
@@ -104,15 +105,18 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentIndex = 0;
 
+  // ── LOGICA DE ITINERARIOS (Inyectada) ──
+  Map<String, dynamic>? _itinerarioData;
+
   // ── COLORES MARCA WALI ──
-  static const Color bgLight        = Color(0xFFF2FBFF);
-  static const Color brandTeal      = Color(0xFF0F988A);
-  static const Color brandEmerald   = Color(0xFF197D61);
-  static const Color brandAmber     = Color(0xFFD27817);
-  static const Color brandTerracota = Color(0xFF7A3928);
-  static const Color brandOrange    = Color(0xFFF25C05);
-  static const Color brandOrangeOld = Color(0xFFF57C00);
-  static const Color brandDark      = Color(0xFF23373E);
+  static const Color bgLight         = Color(0xFFF2FBFF);
+  static const Color brandTeal       = Color(0xFF0F988A);
+  static const Color brandEmerald    = Color(0xFF197D61);
+  static const Color brandAmber      = Color(0xFFD27817);
+  static const Color brandTerracota  = Color(0xFF7A3928);
+  static const Color brandOrange     = Color(0xFFF25C05);
+  static const Color brandOrangeOld  = Color(0xFFF57C00);
+  static const Color brandDark       = Color(0xFF23373E);
 
   // ── DATOS ──
   bool _isLoading = true;
@@ -126,12 +130,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   // ── FILTROS (IDs del diccionario de datos WALI) ──
   final List<_CategoryFilter> _categories = const [
-    _CategoryFilter(label: 'Cultural',    icon: Icons.account_balance_rounded, categoriaIds: [401, 405], tipoRutaIds: [701]),
+    _CategoryFilter(label: 'Cultural',     icon: Icons.account_balance_rounded, categoriaIds: [401, 405], tipoRutaIds: [701]),
     _CategoryFilter(label: 'Gastronomía', icon: Icons.restaurant_rounded,      categoriaIds: [406],      tipoRutaIds: [702]),
     _CategoryFilter(label: 'Historia',    icon: Icons.history_edu_rounded,      categoriaIds: [401, 403], tipoRutaIds: [701]),
-    _CategoryFilter(label: 'Miradores',   icon: Icons.landscape_rounded,        categoriaIds: [402],      tipoRutaIds: [703]),
-    _CategoryFilter(label: 'Compras',     icon: Icons.shopping_bag_rounded,     categoriaIds: [406, 407], tipoRutaIds: [704]),
-    _CategoryFilter(label: 'Teleférico',  icon: Icons.cable_rounded,            categoriaIds: [404],      tipoRutaIds: [703]),
+    _CategoryFilter(label: 'Miradores',   icon: Icons.landscape_rounded,         categoriaIds: [402],      tipoRutaIds: [703]),
+    _CategoryFilter(label: 'Compras',      icon: Icons.shopping_bag_rounded,      categoriaIds: [406, 407], tipoRutaIds: [704]),
+    _CategoryFilter(label: 'Teleférico',  icon: Icons.cable_rounded,             categoriaIds: [404],      tipoRutaIds: [703]),
   ];
 
   int _selectedCategory = 0;
@@ -201,7 +205,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             .maybeSingle();
         if (personaRes != null) {
           final nombres = personaRes['nombres'] as String? ?? '';
-          // Tomar solo el primer nombre
           _userName = nombres.split(' ').first;
         }
       }
@@ -233,13 +236,54 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _isLoading = false;
       });
       _fadeController.forward();
-      // Iniciar auto-scroll solo si hay más de 1 card
       if (_filteredCards.length > 1) {
         _autoScrollController.forward();
       }
     } catch (e) {
       if (!mounted) return;
       setState(() { _error = e.toString(); _isLoading = false; });
+    }
+  }
+
+  // --- LÓGICA DE NAVEGACIÓN INTERNA ITINERARIOS (Surgical Injection) ---
+  Future<void> _gestionarItinerario() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user == null) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Sincronizando itinerario...'), duration: Duration(milliseconds: 800)),
+    );
+
+    try {
+      final data = await Supabase.instance.client
+          .from('itinerarios')
+          .select('''
+            *,
+            itinerario_dias (
+              id,
+              numero_dia,
+              fecha_calendario,
+              itinerario_actividades (
+                id,
+                nombre,
+                hora_inicio,
+                hora_fin,
+                precio,
+                es_prioridad,
+                notas_usuario
+              )
+            )
+          ''')
+          .eq('id_persona', user.id)
+          .maybeSingle();
+
+      setState(() {
+        _itinerarioData = data;
+        _currentIndex = 6; 
+      });
+    } catch (e) {
+      debugPrint("Error: $e");
+      setState(() => _currentIndex = 6);
     }
   }
 
@@ -284,7 +328,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       setState(() => _selectedCategory = index);
       try { _cardController.jumpToPage(0); } catch (_) {}
       _fadeController.forward();
-      // Reiniciar auto-scroll al cambiar categoría
       _autoScrollController.reset();
       if (_filteredCards.length > 1) _autoScrollController.forward();
     });
@@ -327,7 +370,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               children: [
                 _buildModuleItem(Icons.route_rounded, 'Itinerarios', brandTeal, () {
                   Navigator.pop(context);
-                  setState(() => _currentIndex = 6);
+                  _gestionarItinerario(); // Lógica integrada
                 }),
                 _buildModuleItem(Icons.payments_outlined, 'Tarifas', brandOrangeOld, () {
                   Navigator.pop(context);
@@ -371,12 +414,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         index: _currentIndex,
         children: [
           _buildHomeTab(),       // 0 — Inicio
-          const RoutesView(),    // 1 — Mapas (barra de navegación)
+          const RoutesView(),    // 1 — Mapas
           const ChatView(),      // 2 — Wali IA
           const ProfileView(),   // 3 — Perfil
-          const RatesView(),     // 4 — Tarifas (menú +)
-          const OcrView(),       // 5 — Cámara OCR (menú +)
-          const ItineraryView(), // 6 — Itinerarios (menú +)
+          const RatesView(),     // 4 — Tarifas
+          const OcrView(),       // 5 — Cámara OCR
+          // 6 — MÓDULO DINÁMICO INTEGRADO
+          _itinerarioData != null 
+              ? DiaryScreen(itinerarioData: _itinerarioData!) 
+              : const ItineraryView(),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -396,11 +442,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: SizedBox(
           height: 60,
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _buildNavItem(Icons.home_filled,        'Inicio',  0),
-            _buildNavItem(Icons.map_outlined,       'Mapas',   1),
+            _buildNavItem(Icons.home_filled,         'Inicio',  0),
+            _buildNavItem(Icons.map_outlined,        'Mapas',   1),
             const SizedBox(width: 40),
             _buildNavItem(Icons.smart_toy_outlined, 'Wali IA', 2),
-            _buildNavItem(Icons.person_outline,     'Perfil',  3),
+            _buildNavItem(Icons.person_outline,      'Perfil',  3),
           ]),
         ),
       ),
@@ -422,18 +468,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ─────────────────────────────────────
-  //  HOME TAB
+  //  HOME TAB (100% Original UI)
   // ─────────────────────────────────────
   Widget _buildHomeTab() {
     return SafeArea(
       child: CustomScrollView(
         physics: const BouncingScrollPhysics(),
         slivers: [
-          // 1️⃣ Encabezado de la app (logo/iconos) — PRIMERO
           SliverToBoxAdapter(child: _buildAppHeader()),
-          // 2️⃣ Saludo con nombre real del usuario
           SliverToBoxAdapter(child: _buildGreeting()),
-          // 3️⃣ Barra de búsqueda — DEBAJO del saludo
           SliverToBoxAdapter(child: _buildSearchBar()),
           SliverToBoxAdapter(child: _buildCategoryFilters()),
           SliverToBoxAdapter(child: _buildCarousel()),
@@ -454,9 +497,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  APP HEADER — Logo + iconos (arriba de todo)
-  // ─────────────────────────────────────
   Widget _buildAppHeader() {
     return Container(
       color: bgLight,
@@ -464,7 +504,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          // Logo / nombre de la app
           Row(children: [
             Container(
               width: 36, height: 36,
@@ -485,7 +524,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               ),
             ),
           ]),
-          // Iconos de notificaciones y filtros
           Row(children: [
             _headerIconBtn(Icons.notifications_outlined),
             const SizedBox(width: 8),
@@ -496,9 +534,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  BARRA DE BÚSQUEDA — separada, debajo del saludo
-  // ─────────────────────────────────────
   Widget _buildSearchBar() {
     return Container(
       color: bgLight,
@@ -544,11 +579,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  SALUDO — con nombre real desde Supabase
-  // ─────────────────────────────────────
   Widget _buildGreeting() {
-    // Nombre a mostrar: si ya cargó, el nombre real; si no, 'Explorer'
     final displayName = _userName.isNotEmpty ? _userName : 'Explorer';
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
@@ -596,9 +627,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  FILTROS DE CATEGORÍA
-  // ─────────────────────────────────────
   Widget _buildCategoryFilters() {
     return SizedBox(
       height: 52,
@@ -639,9 +667,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  CARRUSEL PRINCIPAL — con auto-scroll
-  // ─────────────────────────────────────
   Widget _buildCarousel() {
     return Padding(
       padding: const EdgeInsets.only(top: 12),
@@ -663,7 +688,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   itemCount: _filteredCards.length,
                                   physics: const BouncingScrollPhysics(),
                                   onPageChanged: (_) {
-                                    // Reiniciar el timer de auto-scroll al deslizar manualmente
                                     _autoScrollController.reset();
                                     if (_filteredCards.length > 1) {
                                       _autoScrollController.forward();
@@ -672,7 +696,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                                   itemBuilder: (ctx, i) => _buildMainCard(_filteredCards[i], i),
                                 ),
                               ),
-                              // Indicadores de página (dots)
                               if (_filteredCards.length > 1)
                                 Padding(
                                   padding: const EdgeInsets.only(top: 8),
@@ -685,7 +708,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // Indicadores de posición del carrusel
   Widget _buildPageIndicator() {
     return AnimatedBuilder(
       animation: _cardController,
@@ -697,7 +719,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(count > 5 ? 5 : count, (i) {
-            // Si hay más de 5, mostrar solo 5 dots
             final isActive = i == (currentPage % (count > 5 ? 5 : count));
             return AnimatedContainer(
               duration: const Duration(milliseconds: 250),
@@ -836,9 +857,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  SECTION HEADER REUTILIZABLE
-  // ─────────────────────────────────────
   Widget _buildSectionHeader(String title, {VoidCallback? onTap, IconData? icon, Color? iconColor}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 6),
@@ -865,9 +883,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  DESTACADOS — scroll horizontal
-  // ─────────────────────────────────────
   Widget _buildDestacadosGrid() {
     if (_isLoading) return _buildSkeletonList(158, 138);
     final puntos = _destacados;
@@ -928,9 +943,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  ZONAS DE RIESGO — carrusel compacto
-  // ─────────────────────────────────────
   Widget _buildZonasCarrusel() {
     return SizedBox(
       height: 92,
@@ -975,9 +987,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  BANNER IA — navega al ChatView
-  // ─────────────────────────────────────
   Widget _buildIaBanner() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
@@ -1024,9 +1033,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ─────────────────────────────────────
-  //  ESTADOS: Skeleton / Error / Vacío
-  // ─────────────────────────────────────
   Widget _buildSkeletonList(double height, double itemWidth) {
     return SizedBox(
       height: height,
@@ -1071,7 +1077,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 }
 
 // ─────────────────────────────────────────
-//  MODELOS INTERNOS
+//  MODELOS INTERNOS Y SKELETON
 // ─────────────────────────────────────────
 
 class _CategoryFilter {
@@ -1108,9 +1114,6 @@ class _CardItem {
     isRuta: true, iaGenerado: r.iaGenerado);
 }
 
-// ─────────────────────────────────────────
-//  SKELETON ANIMADO
-// ─────────────────────────────────────────
 class _SkeletonBox extends StatefulWidget {
   final double width;
   final double height;
@@ -1154,5 +1157,12 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
         ),
       ),
     );
+  }
+}
+
+extension StringExtension on String {
+  String capitalize() {
+    if (isEmpty) return this;
+    return "${this[0].toUpperCase()}${substring(1).toLowerCase()}";
   }
 }
