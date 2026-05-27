@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'explore_view.dart';
 import 'itinerary_view.dart';
-import 'diary_screen.dart'; // Importado para la lógica dinámica
+import 'diary_screen.dart';
 import 'routes_view.dart';
 import 'chat_view.dart';
 import 'profile_view.dart';
 import 'rates_view.dart';
 import 'ocr_view.dart';
+import 'route_detail_screen.dart';
+import 'place_detail_screen.dart';
 
 // ─────────────────────────────────────────
 //  MODELOS DE DATOS
@@ -19,7 +21,10 @@ class PuntoTuristico {
   final String descripcion;
   final String? imagenUrl;
   final double? precioNacional;
+  final double? precioExtranjero;
   final int idCategoria;
+  final double? latitud;
+  final double? longitud;
 
   const PuntoTuristico({
     required this.id,
@@ -27,7 +32,10 @@ class PuntoTuristico {
     required this.descripcion,
     this.imagenUrl,
     this.precioNacional,
+    this.precioExtranjero,
     required this.idCategoria,
+    this.latitud,
+    this.longitud,
   });
 
   factory PuntoTuristico.fromMap(Map<String, dynamic> map) {
@@ -37,7 +45,10 @@ class PuntoTuristico {
       descripcion: map['descripcion'] as String? ?? '',
       imagenUrl: map['imagen_url'] as String?,
       precioNacional: (map['precio_nacional'] as num?)?.toDouble(),
+      precioExtranjero: (map['precio_extranjero'] as num?)?.toDouble(),
       idCategoria: map['id_categoria'] as int? ?? 0,
+      latitud: (map['latitud'] as num?)?.toDouble(),
+      longitud: (map['longitud'] as num?)?.toDouble(),
     );
   }
 }
@@ -105,18 +116,17 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _currentIndex = 0;
 
-  // ── LOGICA DE ITINERARIOS (Inyectada) ──
   Map<String, dynamic>? _itinerarioData;
 
   // ── COLORES MARCA WALI ──
-  static const Color bgLight         = Color(0xFFF2FBFF);
-  static const Color brandTeal       = Color(0xFF0F988A);
-  static const Color brandEmerald    = Color(0xFF197D61);
-  static const Color brandAmber      = Color(0xFFD27817);
-  static const Color brandTerracota  = Color(0xFF7A3928);
-  static const Color brandOrange     = Color(0xFFF25C05);
-  static const Color brandOrangeOld  = Color(0xFFF57C00);
-  static const Color brandDark       = Color(0xFF23373E);
+  static const Color bgLight        = Color(0xFFF2FBFF);
+  static const Color brandTeal      = Color(0xFF0F988A);
+  static const Color brandEmerald   = Color(0xFF197D61);
+  static const Color brandAmber     = Color(0xFFD27817);
+  static const Color brandTerracota = Color(0xFF7A3928);
+  static const Color brandOrange    = Color(0xFFF25C05);
+  static const Color brandOrangeOld = Color(0xFFF57C00);
+  static const Color brandDark      = Color(0xFF23373E);
 
   // ── DATOS ──
   bool _isLoading = true;
@@ -125,28 +135,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   List<ZonaRiesgo> _zonas = [];
   String? _error;
 
-  // ── NOMBRE DE USUARIO desde tabla personas ──
   String _userName = '';
 
-  // ── FILTROS (IDs del diccionario de datos WALI) ──
   final List<_CategoryFilter> _categories = const [
-    _CategoryFilter(label: 'Cultural',     icon: Icons.account_balance_rounded, categoriaIds: [401, 405], tipoRutaIds: [701]),
+    _CategoryFilter(label: 'Cultural',    icon: Icons.account_balance_rounded, categoriaIds: [401, 405], tipoRutaIds: [701]),
     _CategoryFilter(label: 'Gastronomía', icon: Icons.restaurant_rounded,      categoriaIds: [406],      tipoRutaIds: [702]),
     _CategoryFilter(label: 'Historia',    icon: Icons.history_edu_rounded,      categoriaIds: [401, 403], tipoRutaIds: [701]),
-    _CategoryFilter(label: 'Miradores',   icon: Icons.landscape_rounded,         categoriaIds: [402],      tipoRutaIds: [703]),
-    _CategoryFilter(label: 'Compras',      icon: Icons.shopping_bag_rounded,      categoriaIds: [406, 407], tipoRutaIds: [704]),
-    _CategoryFilter(label: 'Teleférico',  icon: Icons.cable_rounded,             categoriaIds: [404],      tipoRutaIds: [703]),
+    _CategoryFilter(label: 'Miradores',   icon: Icons.landscape_rounded,        categoriaIds: [402],      tipoRutaIds: [703]),
+    _CategoryFilter(label: 'Compras',     icon: Icons.shopping_bag_rounded,     categoriaIds: [406, 407], tipoRutaIds: [704]),
+    _CategoryFilter(label: 'Teleférico',  icon: Icons.cable_rounded,            categoriaIds: [404],      tipoRutaIds: [703]),
   ];
 
   int _selectedCategory = 0;
   late final PageController _cardController;
   late final AnimationController _fadeController;
   late final Animation<double> _fadeAnim;
-
-  // Auto-scroll
   late final AnimationController _autoScrollController;
 
-  // Búsqueda
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -195,7 +200,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     try {
       final sb = Supabase.instance.client;
 
-      // ── Cargar nombre del usuario desde tabla personas ──
       final userId = sb.auth.currentUser?.id;
       if (userId != null) {
         final personaRes = await sb
@@ -211,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
       final pRes = await sb
           .from('punto_turistico')
-          .select('id, nombre, descripcion, imagen_url, precio_nacional, id_categoria')
+          .select('id, nombre, descripcion, imagen_url, precio_nacional, precio_extranjero, id_categoria, latitud, longitud')
           .eq('estado', true)
           .order('nombre');
 
@@ -245,7 +249,63 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     }
   }
 
-  // --- LÓGICA DE NAVEGACIÓN INTERNA ITINERARIOS (Surgical Injection) ---
+  // ─────────────────────────────────────
+  //  NAVEGACIÓN A DETALLES
+  // ─────────────────────────────────────
+
+  /// Navega a la pantalla de detalle según si es ruta o punto turístico
+  void _navegarADetalle(_CardItem card) {
+    if (card.isRuta) {
+      // Buscar la ruta completa
+      final ruta = _allRutas.firstWhere(
+        (r) => r.id == card.id,
+        orElse: () => Ruta(
+          id: card.id,
+          nombre: card.nombre,
+          descripcion: card.descripcion,
+          iaGenerado: card.iaGenerado,
+          idTipoRuta: 701,
+        ),
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => RouteDetailScreen(ruta: ruta),
+        ),
+      );
+    } else {
+      // Buscar el punto turístico completo
+      final punto = _allPuntos.firstWhere(
+        (p) => p.id == card.id,
+        orElse: () => PuntoTuristico(
+          id: card.id,
+          nombre: card.nombre,
+          descripcion: card.descripcion,
+          imagenUrl: card.imagenUrl,
+          precioNacional: card.precio,
+          idCategoria: 401,
+        ),
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PlaceDetailScreen(punto: punto),
+        ),
+      );
+    }
+  }
+
+  /// Navega al detalle de un punto turístico desde destacados
+  void _navegarAPuntoDetalle(PuntoTuristico punto) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlaceDetailScreen(punto: punto),
+      ),
+    );
+  }
+
+  // ── LÓGICA DE ITINERARIOS ──
   Future<void> _gestionarItinerario() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
@@ -279,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
       setState(() {
         _itinerarioData = data;
-        _currentIndex = 6; 
+        _currentIndex = 6;
       });
     } catch (e) {
       debugPrint("Error: $e");
@@ -370,7 +430,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
               children: [
                 _buildModuleItem(Icons.route_rounded, 'Itinerarios', brandTeal, () {
                   Navigator.pop(context);
-                  _gestionarItinerario(); // Lógica integrada
+                  _gestionarItinerario();
                 }),
                 _buildModuleItem(Icons.payments_outlined, 'Tarifas', brandOrangeOld, () {
                   Navigator.pop(context);
@@ -413,15 +473,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       body: IndexedStack(
         index: _currentIndex,
         children: [
-          _buildHomeTab(),       // 0 — Inicio
-          const RoutesView(),    // 1 — Mapas
-          const ChatView(),      // 2 — Wali IA
-          const ProfileView(),   // 3 — Perfil
-          const RatesView(),     // 4 — Tarifas
-          const OcrView(),       // 5 — Cámara OCR
-          // 6 — MÓDULO DINÁMICO INTEGRADO
-          _itinerarioData != null 
-              ? DiaryScreen(itinerarioData: _itinerarioData!) 
+          _buildHomeTab(),
+          const RoutesView(),
+          const ChatView(),
+          const ProfileView(),
+          const RatesView(),
+          const OcrView(),
+          _itinerarioData != null
+              ? DiaryScreen(itinerarioData: _itinerarioData!)
               : const ItineraryView(),
         ],
       ),
@@ -442,11 +501,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: SizedBox(
           height: 60,
           child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
-            _buildNavItem(Icons.home_filled,         'Inicio',  0),
-            _buildNavItem(Icons.map_outlined,        'Mapas',   1),
+            _buildNavItem(Icons.home_filled,        'Inicio',  0),
+            _buildNavItem(Icons.map_outlined,       'Mapas',   1),
             const SizedBox(width: 40),
             _buildNavItem(Icons.smart_toy_outlined, 'Wali IA', 2),
-            _buildNavItem(Icons.person_outline,      'Perfil',  3),
+            _buildNavItem(Icons.person_outline,     'Perfil',  3),
           ]),
         ),
       ),
@@ -468,7 +527,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ─────────────────────────────────────
-  //  HOME TAB (100% Original UI)
+  //  HOME TAB
   // ─────────────────────────────────────
   Widget _buildHomeTab() {
     return SafeArea(
@@ -746,78 +805,82 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     ];
     final grad = grads[index % grads.length];
 
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOut,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Container(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.14), blurRadius: 18, offset: const Offset(0, 6))],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(24),
-          child: Stack(fit: StackFit.expand, children: [
-            if (card.imagenUrl != null && card.imagenUrl!.isNotEmpty)
-              Image.network(card.imagenUrl!, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => _gradBox(grad))
-            else
-              _gradBox(grad),
-            Container(decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.70)],
-                stops: const [0.28, 1.0],
-              ),
-            )),
-            Positioned(top: 14, left: 14,
-              child: _badge(
-                icon: card.isRuta ? Icons.route_rounded : Icons.place_rounded,
-                label: card.isRuta ? 'RUTA' : 'POPULAR',
-                color: card.isRuta ? brandAmber : brandTeal,
+    return GestureDetector(
+      onTap: () => _navegarADetalle(card),
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.14), blurRadius: 18, offset: const Offset(0, 6))],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Stack(fit: StackFit.expand, children: [
+              if (card.imagenUrl != null && card.imagenUrl!.isNotEmpty)
+                Image.network(card.imagenUrl!, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _gradBox(grad))
+              else
+                _gradBox(grad),
+              Container(decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                  colors: [Colors.transparent, Colors.black.withValues(alpha: 0.70)],
+                  stops: const [0.28, 1.0],
+                ),
               )),
-            if (card.iaGenerado)
-              Positioned(top: 14, right: 14,
+              Positioned(top: 14, left: 14,
                 child: _badge(
-                  icon: Icons.auto_awesome,
-                  label: 'IA',
-                  color: Colors.white.withValues(alpha: 0.20),
-                  border: true,
+                  icon: card.isRuta ? Icons.route_rounded : Icons.place_rounded,
+                  label: card.isRuta ? 'RUTA' : 'POPULAR',
+                  color: card.isRuta ? brandAmber : brandTeal,
                 )),
-            Positioned(left: 16, right: 16, bottom: 14,
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-                Text(card.nombre,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white, height: 1.2),
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 5),
-                Text(card.descripcion,
-                  style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.80), height: 1.3),
-                  maxLines: 2, overflow: TextOverflow.ellipsis),
-                const SizedBox(height: 10),
-                Row(children: [
-                  if (!card.isRuta && card.precio != null) ...[
-                    _infoChip(Icons.sell_rounded, 'Bs. ${card.precio!.toStringAsFixed(0)}'),
-                    const SizedBox(width: 6),
-                  ],
-                  _infoChip(Icons.star_rounded, '4.7'),
-                  const Spacer(),
-                  GestureDetector(
-                    onTap: () {},
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.18),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+              if (card.iaGenerado)
+                Positioned(top: 14, right: 14,
+                  child: _badge(
+                    icon: Icons.auto_awesome,
+                    label: 'IA',
+                    color: Colors.white.withValues(alpha: 0.20),
+                    border: true,
+                  )),
+              Positioned(left: 16, right: 16, bottom: 14,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                  Text(card.nombre,
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white, height: 1.2),
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 5),
+                  Text(card.descripcion,
+                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.80), height: 1.3),
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    if (!card.isRuta && card.precio != null) ...[
+                      _infoChip(Icons.sell_rounded, 'Bs. ${card.precio!.toStringAsFixed(0)}'),
+                      const SizedBox(width: 6),
+                    ],
+                    _infoChip(Icons.star_rounded, '4.7'),
+                    const Spacer(),
+                    // Botón "Explorar" ahora navega a la pantalla correcta
+                    GestureDetector(
+                      onTap: () => _navegarADetalle(card),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                        ),
+                        child: const Text('Explorar →',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
                       ),
-                      child: const Text('Explorar →',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
                     ),
-                  ),
+                  ]),
                 ]),
-              ]),
-            ),
-          ]),
+              ),
+            ]),
+          ),
         ),
       ),
     );
@@ -902,7 +965,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final List<Color> colors = [brandTeal, brandEmerald, brandAmber, brandTerracota, brandOrange, brandDark];
     final color = colors[index % colors.length];
     return GestureDetector(
-      onTap: () {},
+      onTap: () => _navegarAPuntoDetalle(p), // ← navega al detalle del punto
       child: Container(
         width: 138,
         margin: const EdgeInsets.only(right: 12, bottom: 4),
@@ -956,8 +1019,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _buildZonaCard(ZonaRiesgo zona) {
-    final colorMap    = {801: const Color(0xFFFFF3E0), 802: const Color(0xFFFFEBEE), 803: const Color(0xFFFCE4EC)};
-    final iconColorMap= {801: const Color(0xFFF57C00), 802: const Color(0xFFE53935), 803: const Color(0xFFAD1457)};
+    final colorMap     = {801: const Color(0xFFFFF3E0), 802: const Color(0xFFFFEBEE), 803: const Color(0xFFFCE4EC)};
+    final iconColorMap = {801: const Color(0xFFF57C00), 802: const Color(0xFFE53935), 803: const Color(0xFFAD1457)};
     final bgColor   = colorMap[zona.idNivelRiesgo]    ?? const Color(0xFFFFF3E0);
     final iconColor = iconColorMap[zona.idNivelRiesgo] ?? const Color(0xFFF57C00);
 
