@@ -376,7 +376,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   Navigator.pop(context);
                   setState(() => _currentIndex = 4);
                 }),
-                _buildModuleItem(Icons.camera_alt_rounded, 'Cámara OCR', const Color(0xFFE64A19), () {
+                _buildModuleItem(Icons.camera_alt_rounded, 'Analizar Menús', const Color(0xFFE64A19), () {
                   Navigator.pop(context);
                   setState(() => _currentIndex = 5);
                 }),
@@ -418,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           const ChatView(),      // 2 — Wali IA
           const ProfileView(),   // 3 — Perfil
           const RatesView(),     // 4 — Tarifas
-          const OcrView(),       // 5 — Cámara OCR
+          const OcrView(),       // 5 — Analizar Menús
           // 6 — MÓDULO DINÁMICO INTEGRADO
           _itinerarioData != null 
               ? DiaryScreen(itinerarioData: _itinerarioData!) 

@@ -18,6 +18,9 @@ class _OcrViewState extends State<OcrView> {
   bool _estaProcesando = false;
   File? _imagenSeleccionada;
   List<dynamic> _platosDetectados = [];
+  Map<int, double> _promediosPlatos = {};   // id_plato -> promedio
+  Map<int, int?> _miCalificacion = {};      // id_plato -> puntuacion del usuario actual
+  int? _idPersonaActual;
 
   // Colores alineados con tu módulo de Itinerarios
   final Color brandTeal = const Color(0xFF0F988A);
@@ -25,6 +28,69 @@ class _OcrViewState extends State<OcrView> {
   final Color backgroundColor = const Color(0xFFF8FAFB);
 
   // --- LÓGICA DE NEGOCIO ---
+  @override
+  void initState() {
+    super.initState();
+    _cargarIdPersona();
+  }
+
+  Future<void> _cargarIdPersona() async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
+    final resp = await _supabase
+        .from('personas')
+        .select('id')
+        .eq('id_usuario', user.id)
+        .single();
+    setState(() => _idPersonaActual = resp['id']);
+  }
+
+  Future<void> _cargarCalificaciones(List<dynamic> platos) async {
+    if (platos.isEmpty) return;
+    final ids = platos.map((p) => p['id'] as int).toList();
+
+    final promediosResp = await _supabase
+        .from('calificaciones_platos')
+        .select('id_plato, puntuacion')
+        .inFilter('id_plato', ids);
+
+    Map<int, List<int>> agrupados = {};
+    for (var r in promediosResp) {
+      int idP = r['id_plato'];
+      agrupados.putIfAbsent(idP, () => []).add(r['puntuacion'] as int);
+    }
+    Map<int, double> promedios = {};
+    agrupados.forEach((id, puntos) {
+      promedios[id] = puntos.reduce((a, b) => a + b) / puntos.length;
+    });
+
+    Map<int, int?> misCal = {};
+    if (_idPersonaActual != null) {
+      final misResp = await _supabase
+          .from('calificaciones_platos')
+          .select('id_plato, puntuacion')
+          .inFilter('id_plato', ids)
+          .eq('id_persona', _idPersonaActual!);
+      for (var r in misResp) {
+        misCal[r['id_plato'] as int] = r['puntuacion'] as int;
+      }
+    }
+
+    setState(() {
+      _promediosPlatos = promedios;
+      _miCalificacion = misCal;
+    });
+  }
+
+  Future<void> _guardarCalificacion(int idPlato, int puntuacion) async {
+    if (_idPersonaActual == null) return;
+    await _supabase.from('calificaciones_platos').upsert({
+      'id_plato': idPlato,
+      'id_persona': _idPersonaActual,
+      'puntuacion': puntuacion,
+    }, onConflict: 'id_plato, id_persona');
+    setState(() => _miCalificacion[idPlato] = puntuacion);
+  }
 
   Future<void> _capturarImagen(ImageSource fuente) async {
     try {
@@ -84,6 +150,7 @@ class _OcrViewState extends State<OcrView> {
         _platosDetectados = encontrados;
         _estaProcesando = false;
       });
+      await _cargarCalificaciones(encontrados);
 
     } catch (e) {
       _mostrarMensaje("Error en la BDD: $e", esError: true);
@@ -229,7 +296,8 @@ class _OcrViewState extends State<OcrView> {
                     Text(plato['nombre'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF001F1A))),
                     const SizedBox(height: 4),
                     Text("Ver ficha técnica", style: TextStyle(color: brandTeal, fontSize: 11, fontWeight: FontWeight.bold)),
-                  ],
+                    const SizedBox(height: 5),
+                    _buildEstrellas(_promediosPlatos[plato['id']] ?? 0.0, size: 14),                  ],
                 ),
               ),
             ),
@@ -294,6 +362,8 @@ class _OcrViewState extends State<OcrView> {
                   
                   const SizedBox(height: 30),
                   
+                  
+
                   _buildSeccion(
                     titulo: "ALERTA DE ALÉRGENOS",
                     color: Colors.redAccent,
@@ -322,12 +392,142 @@ class _OcrViewState extends State<OcrView> {
                     msgVacio: "Sin ingredientes base registrados.",
                   ),
                   
+                  const SizedBox(height: 30),
+
+                  // --- SECCIÓN DE CALIFICACIÓN ---
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFB),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.grey.shade200),
+                    ),
+                    child: Column(
+                      children: [
+                        const Text('¿Ya comiste este plato?', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF001F1A))),
+                        const SizedBox(height: 4),
+                        const Text('Cuéntanos qué te pareció', style: TextStyle(color: Colors.black45, fontSize: 13)),
+                        const SizedBox(height: 12),
+                        if ((_promediosPlatos[plato['id']] ?? 0.0) > 0) ...[
+                          _buildEstrellas(_promediosPlatos[plato['id']]!, size: 20),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${_promediosPlatos[plato['id']]!.toStringAsFixed(1)} / 5.0 promedio',
+                            style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(context);
+                              _mostrarModalCalificacion(plato);
+                            },
+                            icon: Icon(
+                              _miCalificacion[plato['id']] != null ? Icons.edit : Icons.star,
+                              color: Colors.white, size: 18,
+                            ),
+                            label: Text(
+                              _miCalificacion[plato['id']] != null ? 'Cambiar calificación' : 'Calificar',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: brandTeal,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
                   const SizedBox(height: 40),
                 ],
               ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildEstrellas(double promedio, {double size = 18}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: List.generate(5, (i) {
+        if (promedio >= i + 1) return Icon(Icons.star, size: size, color: const Color(0xFFFFC107));
+        if (promedio > i) return Icon(Icons.star_half, size: size, color: const Color(0xFFFFC107));
+        return Icon(Icons.star_border, size: size, color: Colors.grey.shade300);
+      }),
+    );
+  }
+
+  void _mostrarModalCalificacion(Map<String, dynamic> plato) {
+    int idPlato = plato['id'];
+    int seleccion = _miCalificacion[idPlato] ?? 0;
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Text(
+            _miCalificacion[idPlato] != null ? 'Cambiar calificación' : 'Calificar plato',
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(plato['nombre'], style: TextStyle(color: brandTeal, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 20),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: List.generate(5, (i) => GestureDetector(
+                  onTap: () => setDState(() => seleccion = i + 1),
+                  child: Icon(
+                    i < seleccion ? Icons.star : Icons.star_border,
+                    color: i < seleccion ? const Color(0xFFFFC107) : Colors.grey.shade300,
+                    size: 40,
+                  ),
+                )),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                seleccion == 0 ? 'Toca una estrella' : '$seleccion / 5',
+                style: TextStyle(color: Colors.grey.shade500, fontSize: 13),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: brandTeal,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: seleccion == 0 ? null : () async {
+                await _guardarCalificacion(idPlato, seleccion);
+                await _cargarCalificaciones(_platosDetectados);
+                if (mounted) {
+                  Navigator.pop(context);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: brandTeal,
+                      content: const Text('¡Gracias por tus comentarios!'),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Enviar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            ),
+          ],
+        ),
       ),
     );
   }

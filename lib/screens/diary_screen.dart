@@ -2,6 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'home_screen.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
+import 'dart:io';
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
 
 class DiaryScreen extends StatefulWidget {
   final Map<String, dynamic> itinerarioData;
@@ -333,6 +339,207 @@ class _DiaryScreenState extends State<DiaryScreen> {
     );
   }
 
+  Future<void> _generarPdf() async {
+  final pdf = pw.Document();
+  final now = DateTime.now();
+  final footerText =
+      'Generado el ${DateFormat('dd/MM/yyyy HH:mm').format(now)} · Hecho en WaliApp';
+
+  // Colores
+  final colorVerde = PdfColor.fromHex('#006D5B');
+  final colorVerdeClaro = PdfColor.fromHex('#E8F6F3');
+  final colorGrisHeader = PdfColor.fromHex('#F0F4F3');
+  final colorTexto = PdfColor.fromHex('#001F1A');
+
+  final dias = (_itinerario['dias'] ?? []) as List;
+
+  pdf.addPage(
+    pw.MultiPage(
+      pageFormat: PdfPageFormat.a4,
+      margin: const pw.EdgeInsets.all(32),
+      footer: (context) => pw.Container(
+        alignment: pw.Alignment.centerRight,
+        margin: const pw.EdgeInsets.only(top: 8),
+        child: pw.Text(
+          footerText,
+          style: pw.TextStyle(fontSize: 8, color: PdfColors.grey600),
+        ),
+      ),
+      build: (context) {
+        List<pw.Widget> contenido = [];
+
+        // --- ENCABEZADO ---
+        contenido.add(
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: pw.BoxDecoration(color: colorVerde),
+            child: pw.Text(
+              _itinerario['titulo'] ?? 'Itinerario de Viaje',
+              style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                  color: PdfColors.white),
+            ),
+          ),
+        );
+
+        // --- FECHAS Y PRESUPUESTO ---
+        String fInicio = DateFormat('dd/MM/yyyy').format(_parseDate(_itinerario['fecha_inicio']));
+        String fFin = DateFormat('dd/MM/yyyy').format(_parseDate(_itinerario['fecha_fin']));
+
+        contenido.add(pw.SizedBox(height: 12));
+        contenido.add(
+          pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.RichText(
+                text: pw.TextSpan(children: [
+                  pw.TextSpan(
+                      text: 'Fecha de inicio: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10, color: colorTexto)),
+                  pw.TextSpan(
+                      text: fInicio,
+                      style: pw.TextStyle(fontSize: 10, color: colorTexto)),
+                ]),
+              ),
+              pw.RichText(
+                text: pw.TextSpan(children: [
+                  pw.TextSpan(
+                      text: 'Fecha final: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10, color: colorTexto)),
+                  pw.TextSpan(
+                      text: fFin,
+                      style: pw.TextStyle(fontSize: 10, color: colorTexto)),
+                ]),
+              ),
+              pw.RichText(
+                text: pw.TextSpan(children: [
+                  pw.TextSpan(
+                      text: 'Presupuesto total: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10, color: colorTexto)),
+                  pw.TextSpan(
+                      text: 'Bs. ${_presupuestoTotal.toStringAsFixed(0)}',
+                      style: pw.TextStyle(fontSize: 10, color: colorVerde)),
+                ]),
+              ),
+            ],
+          ),
+        );
+
+        contenido.add(pw.SizedBox(height: 16));
+
+        // --- CABECERA DE LA TABLA ---
+        contenido.add(
+          pw.Container(
+            color: colorVerde,
+            padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            child: pw.Row(
+              children: [
+                pw.Expanded(flex: 2, child: pw.Text('Hora', style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 9))),
+                pw.Expanded(flex: 4, child: pw.Text('Actividad', style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 9))),
+                pw.Expanded(flex: 2, child: pw.Text('Duración', style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 9))),
+                pw.Expanded(flex: 2, child: pw.Text('Costo', style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 9))),
+                pw.Expanded(flex: 3, child: pw.Text('Notas', style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 9))),
+              ],
+            ),
+          ),
+        );
+
+        // --- FILAS POR DÍA ---
+        for (var dia in dias) {
+          DateTime fechaDia = _parseDate(dia['fecha_calendario']);
+          String fechaFormateada = DateFormat('dd/MM/yyyy').format(fechaDia);
+          String nombreDia = DateFormat('EEEE', 'es').format(fechaDia);
+          nombreDia = nombreDia[0].toUpperCase() + nombreDia.substring(1);
+
+          // Sub-encabezado del día
+          contenido.add(
+            pw.Container(
+              color: colorVerdeClaro,
+              padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              child: pw.Text(
+                'Día ${dia['numero_dia']} · $nombreDia $fechaFormateada',
+                style: pw.TextStyle(
+                    fontWeight: pw.FontWeight.bold,
+                    fontSize: 10,
+                    color: colorVerde),
+              ),
+            ),
+          );
+
+          // Actividades del día
+          final actividades = (dia['actividades'] ?? []) as List;
+          bool esFilaAlterna = false;
+          for (var act in actividades) {
+            String hI = _formatearHora(act['hora_inicio']);
+            String hF = _formatearHora(act['hora_fin']);
+            double precio = (act['precio'] ?? 0).toDouble();
+            String notas = act['notas'] ?? '';
+
+            // Calcular duración
+            double minInicio = _toMinutes(hI);
+            double minFin = _toMinutes(hF);
+            double durMin = minFin - minInicio;
+            String duracion = durMin > 0
+                ? '${durMin ~/ 60} h ${(durMin % 60) > 0 ? '${(durMin % 60).toInt()} min' : ''}'.trim()
+                : '-';
+
+            contenido.add(
+              pw.Container(
+                color: esFilaAlterna ? PdfColors.grey100 : PdfColors.white,
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                child: pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Expanded(
+                        flex: 2,
+                        child: pw.Text('$hI-$hF',
+                            style: const pw.TextStyle(fontSize: 8))),
+                    pw.Expanded(
+                        flex: 4,
+                        child: pw.Text((act['nombre'] ?? '').replaceAll(RegExp(r'[^\x00-\x7F]'), '').trim(),
+                            style: const pw.TextStyle(fontSize: 9))),
+                    pw.Expanded(
+                        flex: 2,
+                        child: pw.Text(duracion,
+                            style: const pw.TextStyle(fontSize: 9))),
+                    pw.Expanded(
+                        flex: 2,
+                        child: pw.Text(
+                            precio > 0 ? 'Bs. ${precio.toStringAsFixed(0)}' : 'Gratuito',
+                            style: pw.TextStyle(
+                                fontSize: 9,
+                                color: precio > 0 ? colorVerde : PdfColors.grey600))),
+                    pw.Expanded(
+                        flex: 3,
+                        child: pw.Text(notas,
+                            style: pw.TextStyle(fontSize: 8, color: PdfColors.grey700))),
+                  ],
+                ),
+              ),
+            );
+            esFilaAlterna = !esFilaAlterna;
+          }
+          contenido.add(pw.SizedBox(height: 10));
+        }
+
+        return contenido;
+      },
+    ),
+  );
+
+  final bytes = await pdf.save();
+  final dir = await getApplicationDocumentsDirectory();
+  final titulo = (_itinerario['titulo'] ?? 'itinerario')
+      .toString()
+      .replaceAll(RegExp(r'[^\w\s]'), '')
+      .replaceAll(' ', '_');
+  final file = File('${dir.path}/${titulo}_${DateFormat('yyyyMMdd_HHmm').format(DateTime.now())}.pdf');
+  await file.writeAsBytes(bytes);
+  await OpenFilex.open(file.path);
+}
+
   void _mostrarModalNuevaActividad() {
     int diaSel = 1;
     String nombre = "";
@@ -461,10 +668,25 @@ class _DiaryScreenState extends State<DiaryScreen> {
         ],
       ),
       // --- AQUÍ ESTÁ EL BOTÓN DE (+) QUE HABÍA DESAPARECIDO ---
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF006D5B), 
-        onPressed: _mostrarModalNuevaActividad, 
-        child: const Icon(Icons.add, color: Colors.white)
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            heroTag: 'btnPdf',
+            backgroundColor: Colors.white,
+            elevation: 4,
+            onPressed: _generarPdf,
+            child: const Icon(Icons.picture_as_pdf, color: Color(0xFF006D5B)),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'btnAdd',
+            backgroundColor: const Color(0xFF006D5B),
+            onPressed: _mostrarModalNuevaActividad,
+            child: const Icon(Icons.add, color: Colors.white),
+          ),
+        ],
       ),
       body: _estaGuardando 
         ? const Center(child: CircularProgressIndicator(color: Color(0xFF006D5B)))

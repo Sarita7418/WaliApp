@@ -43,6 +43,10 @@ dependencies:
   webview_flutter: ^4.0.7
   intl: ^0.20.2
   google_mlkit_text_recognition: ^0.15.1
+  pdf: ^3.10.8
+  printing: ^5.12.0
+  open_filex: ^4.7.0
+  path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:
@@ -100,3 +104,4 @@ flutter:
     - .env
     - assets/images/logoWALI.jpeg
     - assets/images/bienvenida.png
+  

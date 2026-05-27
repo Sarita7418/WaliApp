@@ -18,6 +18,8 @@ class _ItineraryViewState extends State<ItineraryView> {
   // 1. Datos de Fechas
   DateTime _fechaInicio = DateTime.now();
   DateTime _fechaFin = DateTime.now().add(const Duration(days: 3));
+  TimeOfDay _horaLlegada = const TimeOfDay(hour: 8, minute: 0);
+  TimeOfDay _horaSalida = const TimeOfDay(hour: 20, minute: 0);
 
   // 2. Configuración de Comidas
   TimeOfDay _hDesayuno = const TimeOfDay(hour: 8, minute: 0);
@@ -74,8 +76,12 @@ class _ItineraryViewState extends State<ItineraryView> {
 
     for (int d = 0; d < totalDias; d++) {
       List<Map<String, dynamic>> agendaDia = [];
-      double horaProgreso = 8.0; 
-      const double horaLimite = 22.0;
+      double horaProgreso = (d == 0)
+          ? _horaLlegada.hour + (_horaLlegada.minute / 60.0)
+          : 8.0;
+      double horaLimite = (d == totalDias - 1)
+          ? _horaSalida.hour + (_horaSalida.minute / 60.0)
+          : 22.0;
 
       while (horaProgreso < horaLimite) {
         // COMIDAS (1 hora de duración)
@@ -279,21 +285,69 @@ class _ItineraryViewState extends State<ItineraryView> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
-          _dateColumn('Llegada', _fechaInicio, true),
-          Container(height: 30, width: 1, color: Colors.grey.shade200),
-          _dateColumn('Salida', _fechaFin, false),
+          _dateTimeColumn('Llegada', _fechaInicio, _horaLlegada, true),
+          Container(height: 60, width: 1, color: Colors.grey.shade200),
+          _dateTimeColumn('Salida', _fechaFin, _horaSalida, false),
         ],
       ),
     );
   }
 
-  Widget _dateColumn(String label, DateTime fecha, bool isStart) {
-    return InkWell(
-      onTap: () async {
-        final pick = await showDatePicker(context: context, initialDate: fecha, firstDate: DateTime.now(), lastDate: DateTime.now().add(const Duration(days: 365)));
-        if (pick != null) setState(() => isStart ? _fechaInicio = pick : _fechaFin = pick);
-      },
-      child: Column(children: [Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)), const SizedBox(height: 5), Text(DateFormat('dd MMM').format(fecha), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Color(0xFF006D5B)))]),
+  Widget _dateTimeColumn(String label, DateTime fecha, TimeOfDay hora, bool isStart) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+        const SizedBox(height: 6),
+        // Selector de fecha
+        InkWell(
+          onTap: () async {
+            final pick = await showDatePicker(
+              context: context,
+              initialDate: fecha,
+              firstDate: DateTime.now(),
+              lastDate: DateTime.now().add(const Duration(days: 365)),
+            );
+            if (pick != null) setState(() => isStart ? _fechaInicio = pick : _fechaFin = pick);
+          },
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.calendar_today, size: 13, color: Color(0xFF006D5B)),
+              const SizedBox(width: 4),
+              Text(
+                DateFormat('dd MMM').format(fecha),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Color(0xFF006D5B)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        // Selector de hora
+        InkWell(
+          onTap: () async {
+            final pick = await showTimePicker(context: context, initialTime: hora);
+            if (pick != null) setState(() => isStart ? _horaLlegada = pick : _horaSalida = pick);
+          },
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: const Color(0xFFE8F6F3),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.access_time, size: 13, color: Color(0xFF006D5B)),
+                const SizedBox(width: 4),
+                Text(
+                  hora.format(context),
+                  style: const TextStyle(fontSize: 13, color: Color(0xFF006D5B), fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 
