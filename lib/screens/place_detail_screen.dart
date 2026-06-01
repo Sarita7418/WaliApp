@@ -4,6 +4,7 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mbx;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'home_screen.dart';
 import 'routes_view.dart';
+import 'audioguia_player.dart';
 
 // ─────────────────────────────────────────
 //  MODELOS
@@ -969,16 +970,34 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
 
     return GestureDetector(
       onTap: () {
-        setState(() {
-          if (isActiva) {
-            _audioguiaActiva = null;
-            _audioReproduciendo = false;
-          } else {
-            _audioguiaActiva = ag;
-            _audioReproduciendo = true;
-          }
-        });
-      },
+  if (ag.audioUrl == null || ag.audioUrl!.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Audio no disponible')));
+    return;
+  }
+  setState(() => _audioguiaActiva = ag);
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.transparent,
+    isDismissible: true,
+    enableDrag: true,
+    builder: (_) => Padding(
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).size.height * 0.45,
+      ),
+      child: AudioguiaPlayer(audioguia: {
+        'audio_url':    ag.audioUrl!,
+        'nombre_punto': widget.punto.nombre,
+        'descripcion':  ag.descripcionCorta,
+        'duracion':     ag.duracionSegundos,
+      }),
+    ),
+  ).whenComplete(() {
+    if (mounted) setState(() => _audioguiaActiva = null);
+  });
+},
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         margin: const EdgeInsets.only(bottom: 12),
