@@ -10,6 +10,7 @@ import 'rates_view.dart';
 import 'ocr_view.dart';
 import 'route_detail_screen.dart';
 import 'place_detail_screen.dart';
+import 'mapa_riesgos_screen.dart';
 
 // =============================================================================
 //  MODELOS DE DATOS
@@ -647,6 +648,7 @@ Widget _buildMapasTab() {
               icon: Icons.warning_amber_rounded,
               iconColor: const Color(0xFFE53935),
             )),
+            SliverToBoxAdapter(child: _buildMapaRiesgosButton()),
             SliverToBoxAdapter(child: _buildZonasCarrusel()),
           ],
           SliverToBoxAdapter(child: _buildIaBanner()),
@@ -674,8 +676,6 @@ Widget _buildMapasTab() {
               fontSize: 20, fontWeight: FontWeight.w900, color: brandTeal, letterSpacing: 1.5)),
           ]),
           Row(children: [
-            _headerIconBtn(Icons.notifications_outlined),
-            const SizedBox(width: 8),
             _headerIconBtn(Icons.tune_rounded),
           ]),
         ],
@@ -1061,6 +1061,28 @@ Widget _buildMapasTab() {
         padding: const EdgeInsets.symmetric(horizontal: 16),
         itemCount: _zonas.length,
         itemBuilder: (ctx, i) => _buildZonaCard(_zonas[i]),
+      ),
+    );
+  }
+
+  Widget _buildMapaRiesgosButton() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: ElevatedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const MapaRiesgosScreen()),
+          );
+        },
+        icon: const Icon(Icons.map_rounded, size: 18),
+        label: const Text('Mapa de riesgos'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: brandOrange,
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
       ),
     );
   }
