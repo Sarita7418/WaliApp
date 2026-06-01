@@ -9,6 +9,7 @@ import 'package:geolocator/geolocator.dart' as geo;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:http/http.dart' as http;
+import 'audioguia_player.dart';
 
 // =============================================================================
 //  WRAPPER PÚBLICO — un solo POI
@@ -323,6 +324,11 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   List<_StepInstruction> _previaSteps  = [];
   List<mbx.Position>     _previaCoords = [];
 
+  // ── Audioguía ──────────────────────────────────────────────────────────────
+  Map<String, dynamic>? _audioguiaActual;
+  bool _audioguiaDisponible = false;
+  // ───────────────────────────────────────────────────────────────────────────
+
   late final AnimationController _sheetCtrl;
   late final Animation<double>   _sheetAnim;
   late final AnimationController _fabCtrl;
@@ -461,6 +467,58 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   ];
 
   // ===========================================================================
+  //  AUDIOGUÍA — cargar y mostrar
+  // ===========================================================================
+
+  /// Carga la audioguía del POI desde Supabase.
+  /// Llama este método cuando el usuario INICIA la navegación hacia un POI
+  /// que tiene tieneAudioguia == true.
+  Future<void> _cargarAudioguiaDePoi(int poiId) async {
+  try {
+    final res = await Supabase.instance.client
+        .from('audioguias')
+        .select('id, titulo, descripcion_corta, audio_url, duracion_segundos')
+        .eq('id_punto_turistico', poiId)
+        .eq('estado', true)
+        .limit(1)
+        .maybeSingle();
+    if (!mounted || res == null) return;
+    // Solo activa si tiene audio_url válida
+    final url = res['audio_url'] as String? ?? '';
+    if (url.isEmpty) return;
+    setState(() {
+      _audioguiaActual = {
+        'audio_url':    url,
+        'nombre_punto': _selectedPoi?.nombre ?? '',
+        'descripcion':  res['descripcion_corta'] ?? 'La Paz, Bolivia',
+        'duracion':     res['duracion_segundos'] ?? 0,
+      };
+      _audioguiaDisponible = true;
+    });
+  } catch (_) {}
+}
+
+  /// Abre el player de audioguía como bottom sheet flotante.
+void _abrirAudioguia() {
+  if (_audioguiaActual == null) return;
+  showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    barrierColor: Colors.transparent,        // ← mapa sigue visible
+    isDismissible: true,
+    enableDrag: true,
+    builder: (_) => Padding(
+      // Sube el sheet para que no tape toda la pantalla
+      padding: EdgeInsets.only(
+        top: MediaQuery.of(context).size.height * 0.45,
+      ),
+      child: AudioguiaPlayer(audioguia: _audioguiaActual!),
+    ),
+  );
+}
+
+  // ===========================================================================
   //  BÚSQUEDA
   // ===========================================================================
 
@@ -579,15 +637,16 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   // ===========================================================================
   //  MAPBOX DIRECTIONS API
   // ===========================================================================
-
-  Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
-    if (_userPosition == null) { _snack('Esperando GPS...'); return; }
-    if (poi.latitud == null)   { _snack('Sin coordenadas'); return; }
-    await _calcularRutaMapbox([
-      '${_userPosition!.longitude},${_userPosition!.latitude}',
-      '${poi.longitud},${poi.latitud}',
-    ], poi.nombre);
-  }
+Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
+  if (_userPosition == null) { _snack('Esperando GPS...'); return; }
+  if (poi.latitud == null)   { _snack('Sin coordenadas'); return; }
+  await _calcularRutaMapbox([
+    '${_userPosition!.longitude},${_userPosition!.latitude}',
+    '${poi.longitud},${poi.latitud}',
+  ], poi.nombre);
+  // Siempre intentar cargar audioguía, sin depender del flag tieneAudioguia
+  _cargarAudioguiaDePoi(poi.id);
+}
 
   Future<void> _iniciarNavegacionRuta(_RutaData ruta) async {
     if (_userPosition == null) { _snack('Esperando GPS...'); return; }
@@ -606,7 +665,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
       '?alternatives=false&geometries=geojson&language=es&overview=full&steps=true&access_token=$token',
     );
     try {
-      _snack('Calculando ruta...');
+      
       final res = await http.get(url).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) { _snack('Error al calcular la ruta'); return; }
       final data   = jsonDecode(res.body) as Map<String, dynamic>;
@@ -809,6 +868,9 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
         _camaraLibre = false;
         _rutaTrazada = false; _previaSteps = []; _previaCoords = [];
         _previaDist = ''; _previaTiempo = '';
+        // Limpiar audioguía al detener navegación
+        _audioguiaActual = null;
+        _audioguiaDisponible = false;
       });
     });
     try {
@@ -978,13 +1040,24 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   // ===========================================================================
 
   void _handlePoiTap(_PoiData poi) {
-    setState(() { _selectedPoi = poi; _selectedRuta = null; });
+    // Limpiar audioguía previa al cambiar de POI
+    setState(() {
+      _selectedPoi = poi;
+      _selectedRuta = null;
+      _audioguiaActual = null;
+      _audioguiaDisponible = false;
+    });
     _sheetCtrl.forward(from: 0);
     if (poi.latitud != null) _flyToCoords(poi.longitud!, poi.latitud! - 0.0008, zoom: 15.5, pitch: 35);
   }
 
   void _handleRutaTap(_RutaData ruta) {
-    setState(() { _selectedRuta = ruta; _selectedPoi = null; });
+    setState(() {
+      _selectedRuta = ruta;
+      _selectedPoi = null;
+      _audioguiaActual = null;
+      _audioguiaDisponible = false;
+    });
     _sheetCtrl.forward(from: 0);
     if (ruta.puntos.isNotEmpty) {
       final coords = ruta.puntos
@@ -1092,7 +1165,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
 
         if (_modoNavegacion)
           Positioned(
-            bottom: navHeight, left: 0, right: 0,
+            bottom: navHeight - 40, left: 0, right: 0,
             child: _buildNavBottomBar(),
           ),
 
@@ -1141,7 +1214,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
             ),
           ),
 
-        // ── SHEET: un solo Positioned en bottom:0, el sheet lleva padding interno ──
+        // ── SHEET ──────────────────────────────────────────────────────────
         if (hasSheet && !_modoNavegacion)
           Positioned(
             bottom: 0, left: 0, right: 0,
@@ -1294,58 +1367,110 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
     );
   }
 
+  // ===========================================================================
+  //  BARRA INFERIOR DE NAVEGACIÓN — con botón 🎧 audioguía
+  // ===========================================================================
+
   Widget _buildNavBottomBar() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 16, offset: const Offset(0, -4))],
+  return Container(
+    padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + MediaQuery.of(context).padding.bottom),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      boxShadow: [BoxShadow(
+        color: Colors.black.withValues(alpha: 0.12),
+        blurRadius: 16, offset: const Offset(0, -4),
+      )],
+    ),
+    child: Row(children: [
+      // ── X Detener ─────────────────────────────────────────────────────
+      GestureDetector(
+        onTap: _detenerNavegacion,
+        child: Container(
+          width: 46, height: 46,
+          decoration: BoxDecoration(
+            color: const Color(0xFFFFEBEB),
+            shape: BoxShape.circle,
+            border: Border.all(color: const Color(0xFFFF5D7A).withValues(alpha: 0.30)),
+          ),
+          child: const Icon(Icons.close_rounded, color: Color(0xFFFF5D7A), size: 22),
+        ),
       ),
-      child: Row(children: [
-        GestureDetector(
-          onTap: _detenerNavegacion,
-          child: Container(
-            width: 46, height: 46,
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFEBEB), shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFFFF5D7A).withValues(alpha: 0.30))),
-            child: const Icon(Icons.close_rounded, color: Color(0xFFFF5D7A), size: 22),
-          ),
-        ),
-        const SizedBox(width: 16),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_navTiempo, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: brandEmerald)),
-          Text('tiempo estimado', style: TextStyle(fontSize: 10, color: brandDark.withValues(alpha: 0.45))),
-        ]),
-        const SizedBox(width: 20),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(_navDistancia, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: brandDark)),
-          Text('distancia total', style: TextStyle(fontSize: 10, color: brandDark.withValues(alpha: 0.45))),
-        ]),
-        const Spacer(),
-        GestureDetector(
-          onTap: () {
-            setState(() => _camaraLibre = true);
-            _mapboxMap?.flyTo(
-              mbx.CameraOptions(
-                center: mbx.Point(coordinates: mbx.Position(
-                  _userPosition?.longitude ?? -68.1336, _userPosition?.latitude ?? -16.4930)),
-                zoom: 14.0, pitch: 0, bearing: 0,
-              ),
-              mbx.MapAnimationOptions(duration: 800),
-            );
-          },
-          child: Container(
-            width: 46, height: 46,
-            decoration: BoxDecoration(
-              color: brandTeal.withValues(alpha: 0.10), shape: BoxShape.circle,
-              border: Border.all(color: brandTeal.withValues(alpha: 0.25))),
-            child: const Icon(Icons.alt_route_rounded, color: brandTeal, size: 22),
-          ),
-        ),
+      const SizedBox(width: 14),
+
+      // ── Tiempo ────────────────────────────────────────────────────────
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_navTiempo, style: const TextStyle(
+          fontSize: 20, fontWeight: FontWeight.w900, color: brandEmerald)),
+        Text('tiempo estimado', style: TextStyle(
+          fontSize: 9, color: brandDark.withValues(alpha: 0.45))),
       ]),
-    );
-  }
+      const SizedBox(width: 14),
+
+      // ── Distancia ─────────────────────────────────────────────────────
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(_navDistancia, style: const TextStyle(
+          fontSize: 16, fontWeight: FontWeight.w800, color: brandDark)),
+        Text('distancia', style: TextStyle(
+          fontSize: 9, color: brandDark.withValues(alpha: 0.45))),
+      ]),
+
+      const Spacer(),
+
+      // ── 🎧 Audioguía — siempre visible, verde si disponible ───────────
+      GestureDetector(
+        onTap: _audioguiaDisponible ? _abrirAudioguia : null,
+        child: Container(
+          width: 46, height: 46,
+          decoration: BoxDecoration(
+            gradient: _audioguiaDisponible
+                ? const LinearGradient(
+                    colors: [brandEmerald, brandTeal],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  )
+                : null,
+            color: _audioguiaDisponible ? null : brandDark.withValues(alpha: 0.10),
+            shape: BoxShape.circle,
+            boxShadow: _audioguiaDisponible
+                ? [BoxShadow(color: brandTeal.withValues(alpha: 0.40),
+                    blurRadius: 10, offset: const Offset(0, 3))]
+                : null,
+          ),
+          child: Icon(Icons.headphones_rounded,
+            color: _audioguiaDisponible ? Colors.white : brandDark.withValues(alpha: 0.28),
+            size: 22),
+        ),
+      ),
+      const SizedBox(width: 10),
+
+      // ── Vista general ─────────────────────────────────────────────────
+      GestureDetector(
+        onTap: () {
+          setState(() => _camaraLibre = true);
+          _mapboxMap?.flyTo(
+            mbx.CameraOptions(
+              center: mbx.Point(coordinates: mbx.Position(
+                _userPosition?.longitude ?? -68.1336,
+                _userPosition?.latitude  ?? -16.4930,
+              )),
+              zoom: 14.0, pitch: 0, bearing: 0,
+            ),
+            mbx.MapAnimationOptions(duration: 800),
+          );
+        },
+        child: Container(
+          width: 46, height: 46,
+          decoration: BoxDecoration(
+            color: brandTeal.withValues(alpha: 0.10),
+            shape: BoxShape.circle,
+            border: Border.all(color: brandTeal.withValues(alpha: 0.25)),
+          ),
+          child: const Icon(Icons.alt_route_rounded, color: brandTeal, size: 22),
+        ),
+      ),
+    ]),
+  );
+}
 
   Widget _buildNavBannerCompacto() {
     return Container(
@@ -1527,7 +1652,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   }
 
   // ===========================================================================
-  //  FICHA POI — DISEÑO ACORDADO
+  //  FICHA POI
   // ===========================================================================
 
   Widget _buildPoiSheet(_PoiData poi) {
@@ -1541,7 +1666,6 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
             width: 42, height: 4,
             margin: const EdgeInsets.only(top: 10, bottom: 14),
@@ -1550,12 +1674,9 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
               borderRadius: BorderRadius.circular(2),
             ),
           ),
-
-          // Cabecera: imagen + info + cerrar
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Thumbnail
               ClipRRect(
                 borderRadius: BorderRadius.circular(14),
                 child: SizedBox(
@@ -1567,14 +1688,11 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
                 ),
               ),
               const SizedBox(width: 12),
-
-              // Info
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Badge categoría
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
@@ -1588,13 +1706,11 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
                       ),
                     ),
                     const SizedBox(height: 3),
-                    // Nombre
                     Text(poi.nombre,
                       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900,
                         color: brandDark, height: 1.15),
                       maxLines: 2, overflow: TextOverflow.ellipsis),
                     const SizedBox(height: 5),
-                    // Stats
                     Row(children: [
                       _stat(Icons.sell_rounded, poi.precioLabel),
                       _divider(),
@@ -1602,7 +1718,6 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
                       _divider(),
                       _stat(Icons.location_on_rounded, 'La Paz'),
                     ]),
-                    // Badge audioguía
                     if (poi.tieneAudioguia) ...[
                       const SizedBox(height: 5),
                       Container(
@@ -1622,8 +1737,6 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
                   ],
                 ),
               ),
-
-              // Cerrar
               GestureDetector(
                 onTap: _closePoi,
                 child: Container(
@@ -1636,20 +1749,14 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
               ),
             ]),
           ),
-
           const SizedBox(height: 12),
-
-          // Descripción
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Text(poi.descripcion,
               style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.58), height: 1.5),
               maxLines: 3, overflow: TextOverflow.ellipsis),
           ),
-
           const SizedBox(height: 16),
-
-          // Botón ancho completo
           Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPad + 52),
             child: _rutaTrazada
@@ -1662,12 +1769,12 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   }
 
   // ===========================================================================
-  //  FICHA RUTA — DISEÑO ACORDADO
+  //  FICHA RUTA
   // ===========================================================================
 
   Widget _buildRutaSheet(_RutaData ruta) {
     return Container(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.65),
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.65),
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -1705,7 +1812,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
               Text(ruta.nombre,
                 style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900,
                   color: Color(0xFF23373E), height: 1.15)),
-              Text('\${ruta.puntos.length} paradas',
+              Text('${ruta.puntos.length} paradas',
                 style: TextStyle(fontSize: 12, color: const Color(0xFF23373E).withValues(alpha: 0.45))),
             ])),
             GestureDetector(
@@ -1790,28 +1897,23 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   );
 
   Widget _botonIniciarNav() => GestureDetector(
-    onTap: () { _closePoi(); _activarModoNavegacion(); },
-    child: Container(
-      height: 52,
-      decoration: BoxDecoration(
-        color: const Color(0xFF197D61),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: const Color(0xFF197D61).withValues(alpha: 0.42),
-          blurRadius: 14, offset: const Offset(0, 4))],
-      ),
-      child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-        const Icon(Icons.navigation_rounded, color: Colors.white, size: 20),
-        const SizedBox(width: 10),
-        Column(mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Iniciar navegación',
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Colors.white)),
-          Text('\$_previaDist · \$_previaTiempo',
-            style: TextStyle(fontSize: 11, color: Colors.white.withValues(alpha: 0.78))),
-        ]),
-      ]),
+  onTap: () { _closePoi(); _activarModoNavegacion(); },
+  child: Container(
+    height: 52,
+    decoration: BoxDecoration(
+      color: const Color(0xFF197D61),
+      borderRadius: BorderRadius.circular(16),
+      boxShadow: [BoxShadow(color: const Color(0xFF197D61).withValues(alpha: 0.42),
+        blurRadius: 14, offset: const Offset(0, 4))],
     ),
-  );
+    child: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(Icons.navigation_rounded, color: Colors.white, size: 20),
+      SizedBox(width: 10),
+      Text('Iniciar navegación',
+        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Colors.white)),
+    ]),
+  ),
+);
 
   Widget _buildRutaStep(_PoiData poi, int index, bool isLast) {
     return IntrinsicHeight(
@@ -1827,7 +1929,7 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
             ),
             child: Center(child: index == 0
               ? const Icon(Icons.play_arrow_rounded, color: Colors.white, size: 14)
-              : Text('\${index + 1}',
+              : Text('${index + 1}',
                   style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white))),
           ),
           if (!isLast)

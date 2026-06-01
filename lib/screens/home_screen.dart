@@ -737,7 +737,7 @@ Widget _buildMapasTab() {
               children: [
                 const TextSpan(text: '¡Hola, '),
                 TextSpan(text: displayName, style: const TextStyle(color: brandTeal)),
-                const TextSpan(text: '! 👋'),
+                const TextSpan(text: '!'),
               ],
             ),
           ),
