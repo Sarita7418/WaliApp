@@ -5,10 +5,10 @@ import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mbx;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'home_screen.dart';
-import 'routes_view.dart'; // ← RoutesViewWrapper, RoutesViewRutaWrapper, RutaPuntoSimple
+import 'routes_view.dart';
 
 // ─────────────────────────────────────────
-//  MODELO RutaPunto (datos de Supabase)
+//  MODELO RutaPunto
 // ─────────────────────────────────────────
 
 class RutaPunto {
@@ -39,26 +39,25 @@ class RutaPunto {
   });
 
   factory RutaPunto.fromMap(Map<String, dynamic> map) {
-    final punto     = map['punto_turistico'] as Map<String, dynamic>? ?? {};
+    final punto      = map['punto_turistico'] as Map<String, dynamic>? ?? {};
     final audioguias = punto['audioguias'] as List?;
     return RutaPunto(
-      id:                       map['id'] as int,
-      orden:                    map['orden'] as int? ?? 0,
-      idPuntoTuristico:         map['id_punto_turistico'] as int,
-      nombrePunto:              punto['nombre'] as String? ?? '',
-      descripcionPunto:         punto['descripcion'] as String? ?? '',
-      imagenUrl:                punto['imagen_url'] as String?,
-      tieneAudioguia:           audioguias != null && audioguias.isNotEmpty,
+      id:                        map['id'] as int,
+      orden:                     map['orden'] as int? ?? 0,
+      idPuntoTuristico:          map['id_punto_turistico'] as int,
+      nombrePunto:               punto['nombre'] as String? ?? '',
+      descripcionPunto:          punto['descripcion'] as String? ?? '',
+      imagenUrl:                 punto['imagen_url'] as String?,
+      tieneAudioguia:            audioguias != null && audioguias.isNotEmpty,
       duracionAudioguiaSegundos: audioguias != null && audioguias.isNotEmpty
           ? audioguias.first['duracion_segundos'] as int?
           : null,
-      latitud:    (punto['latitud'] as num?)?.toDouble(),
-      longitud:   (punto['longitud'] as num?)?.toDouble(),
+      latitud:     (punto['latitud'] as num?)?.toDouble(),
+      longitud:    (punto['longitud'] as num?)?.toDouble(),
       idCategoria: punto['id_categoria'] as int? ?? 401,
     );
   }
 
-  /// Convierte a RutaPuntoSimple para pasarlo a RoutesViewRutaWrapper
   RutaPuntoSimple toSimple() => RutaPuntoSimple(
     id:          idPuntoTuristico,
     nombre:      nombrePunto,
@@ -76,8 +75,14 @@ class RutaPunto {
 
 class RouteDetailScreen extends StatefulWidget {
   final Ruta ruta;
+  // Usa HomeNavigator (interfaz pública) en lugar de _HomeScreenState (privada)
+  final HomeNavigator homeState;
 
-  const RouteDetailScreen({super.key, required this.ruta});
+  const RouteDetailScreen({
+    super.key,
+    required this.ruta,
+    required this.homeState,
+  });
 
   @override
   State<RouteDetailScreen> createState() => _RouteDetailScreenState();
@@ -86,7 +91,6 @@ class RouteDetailScreen extends StatefulWidget {
 class _RouteDetailScreenState extends State<RouteDetailScreen>
     with TickerProviderStateMixin {
 
-  // ── COLORES (mantienen el diseño original) ──
   static const Color bgLight        = Color(0xFFF2FBFF);
   static const Color brandTeal      = Color(0xFF0F988A);
   static const Color brandEmerald   = Color(0xFF197D61);
@@ -204,7 +208,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
     if (puntosConCoords.isEmpty) return;
 
     try {
-      // Marcadores numerados
       final manager = await _miniMap!.annotations.createPointAnnotationManager();
       for (int i = 0; i < puntosConCoords.length; i++) {
         final p = puntosConCoords[i];
@@ -218,7 +221,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
         ));
       }
 
-      // Línea de la ruta entre puntos (sin Directions API, solo línea recta)
       if (puntosConCoords.length >= 2) {
         final polyManager = await _miniMap!.annotations.createPolylineAnnotationManager();
         await polyManager.create(mbx.PolylineAnnotationOptions(
@@ -232,7 +234,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
         ));
       }
 
-      // Ajustar cámara
       if (puntosConCoords.length == 1) {
         await _miniMap!.flyTo(
           mbx.CameraOptions(
@@ -268,18 +269,17 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
           mbx.MapAnimationOptions(duration: 500),
         );
       }
-    } catch (e) {
-      // silenciar errores del mini-mapa
-    }
+    } catch (e) {}
   }
 
   // ─────────────────────────────────────
-  //  NAVEGACIÓN → MAPA COMPLETO CON RUTA
+  //  NAVEGACIÓN → MAPA CON BARRA NAV VISIBLE
+  //
+  //  Usa homeState.abrirMapaConRuta (vía HomeNavigator) para:
+  //    1. Hacer pop de esta pantalla
+  //    2. Cambiar al tab Mapas del IndexedStack del HomeScreen
+  //    3. La barra de nav (Inicio/Mapas/Wali IA/Perfil) siempre visible
   // ─────────────────────────────────────
-
-  /// Abre RoutesView pantalla completa con TODOS los puntos de la ruta.
-  /// El mapa mostrará la ficha de ruta con el timeline de paradas y el
-  /// botón "Iniciar recorrido" que llama a Mapbox Directions API.
   void _abrirMapaCompleto() {
     if (!mounted) return;
 
@@ -296,16 +296,12 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
       return;
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => RoutesViewRutaWrapper(
-          rutaId:          widget.ruta.id,
-          rutaNombre:      widget.ruta.nombre,
-          rutaDescripcion: widget.ruta.descripcion,
-          rutaIaGenerado:  widget.ruta.iaGenerado,
-          puntos:          puntosSimples,
-        ),
-      ),
+    widget.homeState.abrirMapaConRuta(
+      id:          widget.ruta.id,
+      nombre:      widget.ruta.nombre,
+      descripcion: widget.ruta.descripcion,
+      iaGenerado:  widget.ruta.iaGenerado,
+      puntos:      puntosSimples,
     );
   }
 
@@ -447,7 +443,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
         background: Stack(
           fit: StackFit.expand,
           children: [
-            // Fondo degradado tipo
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -457,7 +452,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                 ),
               ),
             ),
-            // Patrón de puntos decorativo
             Positioned.fill(
               child: Opacity(
                 opacity: 0.06,
@@ -474,7 +468,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                 ),
               ),
             ),
-            // Gradiente de oscurecimiento inferior
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -484,7 +477,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                 ),
               ),
             ),
-            // Texto del header
             Positioned(
               bottom: 20, left: 20, right: 20,
               child: Column(
@@ -583,9 +575,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
     );
   }
 
-  // ─────────────────────────────────────
-  //  MINI MAPA  (vista previa de la ruta)
-  // ─────────────────────────────────────
   Widget _buildMiniMapRuta() {
     final token = dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? '';
     mbx.MapboxOptions.setAccessToken(token);
@@ -609,7 +598,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
               ),
               child: Stack(
                 children: [
-                  // Mini mapa Mapbox
                   mbx.MapWidget(
                     styleUri: mbx.MapboxStyles.STANDARD,
                     cameraOptions: mbx.CameraOptions(
@@ -620,7 +608,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                     ),
                     onMapCreated: _onMiniMapCreated,
                   ),
-                  // Etiquetas de paradas flotantes (si ya cargaron)
                   if (!_isLoading && _puntos.isNotEmpty)
                     Positioned(
                       top: 10, left: 10,
@@ -639,7 +626,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                         ]),
                       ),
                     ),
-                  // Botón "Ver Mapa Detallado" → abre RoutesViewRutaWrapper
+                  // Botón "Ver Mapa Detallado" → usa homeState para mantener barra de nav visible
                   Positioned(
                     bottom: 14, left: 0, right: 0,
                     child: Center(
@@ -676,9 +663,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
     );
   }
 
-  // ─────────────────────────────────────
-  //  INFO CHIPS
-  // ─────────────────────────────────────
   Widget _buildInfoChips() {
     return Container(
       color: Colors.white,
@@ -730,9 +714,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
     );
   }
 
-  // ─────────────────────────────────────
-  //  CRONOGRAMA
-  // ─────────────────────────────────────
   Widget _buildCronogramaHeader() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 12),
@@ -756,9 +737,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
   }
 
   Widget _buildCronogramaItem(RutaPunto punto, int index) {
-    final isLast = index == _puntos.length - 1;
+    final isLast     = index == _puntos.length - 1;
     final isExpanded = _expandedIndex == index;
-    final iconData = _iconForIndex(index);
+    final iconData   = _iconForIndex(index);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
@@ -766,7 +747,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Timeline izquierdo
             SizedBox(
               width: 32,
               child: Column(
@@ -802,7 +782,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
               ),
             ),
             const SizedBox(width: 14),
-            // Tarjeta del punto
             Expanded(
               child: GestureDetector(
                 onTap: () => setState(() => _expandedIndex = isExpanded ? null : index),
@@ -887,7 +866,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                                 if (punto.tieneAudioguia) _audioguiaChip(punto),
                               ]),
                               const SizedBox(height: 10),
-                              // Botón "Ver en el mapa" → abre ese punto individual en RoutesView
+                              // "Ver en el mapa" → punto individual (push normal,
+                              // ya que el RouteDetailScreen no viene del tab Mapas)
                               GestureDetector(
                                 onTap: () {
                                   if (punto.latitud != null) {
@@ -1290,7 +1270,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
 
   // ─────────────────────────────────────
   //  BOTTOM CTA — "Comenzar experiencia"
-  //  → abre el mapa completo con TODA la ruta
+  //  → usa homeState.abrirMapaConRuta (vía HomeNavigator)
+  //  → la barra de navegación del HomeScreen SIEMPRE visible
   // ─────────────────────────────────────
   Widget _buildBottomCta() {
     return Container(
@@ -1323,7 +1304,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: brandDark)),
         ]),
         const Spacer(),
-        // ← BOTÓN PRINCIPAL: abre RoutesViewRutaWrapper con todos los puntos
         GestureDetector(
           onTap: _abrirMapaCompleto,
           child: Container(

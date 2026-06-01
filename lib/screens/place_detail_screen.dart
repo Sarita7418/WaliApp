@@ -2,9 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:mapbox_maps_flutter/mapbox_maps_flutter.dart' as mbx;
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'home_screen.dart';
-import 'routes_view.dart'; // ← IMPORTAR RoutesView
+import 'routes_view.dart';
 
 // ─────────────────────────────────────────
 //  MODELOS
@@ -69,8 +68,14 @@ class RutaRelacionada {
 
 class PlaceDetailScreen extends StatefulWidget {
   final PuntoTuristico punto;
+  // Usa HomeNavigator (interfaz pública) en lugar de _HomeScreenState (privada)
+  final HomeNavigator homeState;
 
-  const PlaceDetailScreen({super.key, required this.punto});
+  const PlaceDetailScreen({
+    super.key,
+    required this.punto,
+    required this.homeState,
+  });
 
   @override
   State<PlaceDetailScreen> createState() => _PlaceDetailScreenState();
@@ -159,79 +164,25 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  NAVEGACIÓN — CORE
+  //  NAVEGACIÓN — usa HomeNavigator
+  //  Llama a homeState.abrirMapaConPoi que:
+  //    1. Cierra esta pantalla (pop)
+  //    2. Cambia el IndexedStack al tab Mapas (índice 1)
+  //    3. Pasa los datos del POI al mapa
+  //  La barra de navegación del HomeScreen SIEMPRE permanece visible.
   // ─────────────────────────────────────
 
-  /// Abre RoutesView (mapa pantalla completa) centrado en este punto
-  void _abrirMapaConPunto() {
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => Scaffold(
-          body: RoutesView(
-            initialPoi: _puntoToPoiData(widget.punto),
-          ),
-        ),
-      ),
+  void _abrirMapaConEstePunto() {
+    widget.homeState.abrirMapaConPoi(
+      id:          widget.punto.id,
+      nombre:      widget.punto.nombre,
+      descripcion: widget.punto.descripcion,
+      idCategoria: widget.punto.idCategoria,
+      lat:         widget.punto.latitud,
+      lng:         widget.punto.longitud,
+      precio:      widget.punto.precioNacional,
+      imagenUrl:   widget.punto.imagenUrl,
     );
-  }
-
-  /// Convierte PuntoTuristico → _PoiData para pasarlo a RoutesView
-  dynamic _puntoToPoiData(PuntoTuristico p) {
-    // Usamos la clase pública si está exportada, o creamos el mapa equivalente.
-    // RoutesView acepta initialPoi del tipo _PoiData (privado), así que lo
-    // hacemos a través del constructor from factory expuesto o pasamos null
-    // y volamos con flyTo internamente. Ver routes_view_bridge.dart abajo.
-    return null; // Reemplazado por _abrirRoutesViewConCoordenadas
-  }
-
-  /// Navega directamente a RoutesView y centra el mapa en las coords del punto
-  void _abrirRoutesViewConCoordenadas() {
-    if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => RoutesViewWrapper(
-          targetLat: widget.punto.latitud,
-          targetLng: widget.punto.longitud,
-          targetNombre: widget.punto.nombre,
-          targetCategoria: _categoriaLabel,
-          targetDescripcion: widget.punto.descripcion,
-          targetPrecioNacional: widget.punto.precioNacional,
-          targetImagenUrl: widget.punto.imagenUrl,
-          targetIdCategoria: widget.punto.idCategoria,
-          targetId: widget.punto.id,
-        ),
-      ),
-    );
-  }
-
-  /// Lanza navegación externa (Google Maps o Waze) con ruta desde ubicación actual
-  Future<void> _abrirNavegacionExterna() async {
-    final lat = widget.punto.latitud;
-    final lng = widget.punto.longitud;
-    if (lat == null || lng == null) {
-      _mostrarSnackBar('Este lugar no tiene coordenadas disponibles');
-      return;
-    }
-
-    final nombre = Uri.encodeComponent(widget.punto.nombre);
-
-    // Intentar Google Maps primero
-    final gmUrl = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&destination_place_id=$nombre&travelmode=walking'
-    );
-
-    if (await canLaunchUrl(gmUrl)) {
-      await launchUrl(gmUrl, mode: LaunchMode.externalApplication);
-    } else {
-      // Fallback: URL genérica de mapas
-      final fallback = Uri.parse('geo:$lat,$lng?q=$lat,$lng($nombre)');
-      if (await canLaunchUrl(fallback)) {
-        await launchUrl(fallback, mode: LaunchMode.externalApplication);
-      } else {
-        _mostrarSnackBar('No se pudo abrir la aplicación de mapas');
-      }
-    }
   }
 
   void _mostrarSnackBar(String msg) {
@@ -261,7 +212,6 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       marginLeft: 4,
     ));
     map.attribution.updateSettings(mbx.AttributionSettings(enabled: false));
-
     map.gestures.updateSettings(mbx.GesturesSettings(
       scrollEnabled: false,
       rotateEnabled: false,
@@ -334,7 +284,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
 
   String _duracionLabel(int segundos) {
     final min = (segundos / 60).ceil();
-    return '${min} min';
+    return '$min min';
   }
 
   // ─────────────────────────────────────
@@ -622,7 +572,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  MINI MAPA
+  //  MINI MAPA — "Ver en el mapa" → cambia al tab Mapas
   // ─────────────────────────────────────
   Widget _buildMiniMap() {
     final hasCoords = widget.punto.latitud != null && widget.punto.longitud != null;
@@ -657,8 +607,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
               right: 0,
               child: Center(
                 child: GestureDetector(
-                  // ← CORREGIDO: navega a RoutesView con el punto seleccionado
-                  onTap: _abrirRoutesViewConCoordenadas,
+                  onTap: _abrirMapaConEstePunto,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
                     decoration: BoxDecoration(
@@ -1232,7 +1181,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  BOTTOM CTA — CORREGIDO
+  //  BOTTOM CTA — "Comenzar experiencia"
+  //  → llama a homeState.abrirMapaConPoi (vía HomeNavigator)
+  //  → cierra esta pantalla y cambia al tab Mapas
+  //  → la barra de navegación del HomeScreen SIEMPRE visible
   // ─────────────────────────────────────
   Widget _buildBottomCta() {
     return Container(
@@ -1265,9 +1217,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
           ),
         ]),
         const Spacer(),
-        // ← CORREGIDO: ahora navega al mapa con ruta de navegación
         GestureDetector(
-          onTap: _abrirRoutesViewConCoordenadas,
+          onTap: _abrirMapaConEstePunto,
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
             decoration: BoxDecoration(

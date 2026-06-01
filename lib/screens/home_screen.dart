@@ -11,9 +11,9 @@ import 'ocr_view.dart';
 import 'route_detail_screen.dart';
 import 'place_detail_screen.dart';
 
-// ─────────────────────────────────────────
+// =============================================================================
 //  MODELOS DE DATOS
-// ─────────────────────────────────────────
+// =============================================================================
 
 class PuntoTuristico {
   final int id;
@@ -102,9 +102,91 @@ class ZonaRiesgo {
   }
 }
 
-// ─────────────────────────────────────────
+// =============================================================================
+//  INTERFAZ PÚBLICA — permite que PlaceDetail y RouteDetail cambien el tab
+//  sin depender de _HomeScreenState (que es privada al archivo)
+// =============================================================================
+
+abstract class HomeNavigator {
+  void abrirMapaConPoi({
+    required int id,
+    required String nombre,
+    required String descripcion,
+    required int idCategoria,
+    required double? lat,
+    required double? lng,
+    required double? precio,
+    required String? imagenUrl,
+  });
+
+  void abrirMapaConRuta({
+    required int id,
+    required String nombre,
+    required String descripcion,
+    required bool iaGenerado,
+    required List<RutaPuntoSimple> puntos,
+  });
+}
+
+// =============================================================================
+//  MODELO INTERNO: petición pendiente al mapa
+// =============================================================================
+
+class _MapRequest {
+  final int?    poiId;
+  final String? poiNombre;
+  final String? poiDescripcion;
+  final int?    poiIdCategoria;
+  final double? poiLat;
+  final double? poiLng;
+  final double? poiPrecio;
+  final String? poiImagenUrl;
+
+  final int?                   rutaId;
+  final String?                rutaNombre;
+  final String?                rutaDescripcion;
+  final bool?                  rutaIaGenerado;
+  final List<RutaPuntoSimple>? rutaPuntos;
+
+  final bool isRuta;
+
+  const _MapRequest._({
+    this.poiId, this.poiNombre, this.poiDescripcion, this.poiIdCategoria,
+    this.poiLat, this.poiLng, this.poiPrecio, this.poiImagenUrl,
+    this.rutaId, this.rutaNombre, this.rutaDescripcion, this.rutaIaGenerado,
+    this.rutaPuntos, required this.isRuta,
+  });
+
+  factory _MapRequest.poi({
+    required int    poiId,
+    required String poiNombre,
+    required String poiDescripcion,
+    required int    poiIdCategoria,
+    double? poiLat,
+    double? poiLng,
+    double? poiPrecio,
+    String? poiImagenUrl,
+  }) => _MapRequest._(
+    poiId: poiId, poiNombre: poiNombre, poiDescripcion: poiDescripcion,
+    poiIdCategoria: poiIdCategoria, poiLat: poiLat, poiLng: poiLng,
+    poiPrecio: poiPrecio, poiImagenUrl: poiImagenUrl, isRuta: false,
+  );
+
+  factory _MapRequest.ruta({
+    required int                   rutaId,
+    required String                rutaNombre,
+    required String                rutaDescripcion,
+    required bool                  rutaIaGenerado,
+    required List<RutaPuntoSimple> rutaPuntos,
+  }) => _MapRequest._(
+    rutaId: rutaId, rutaNombre: rutaNombre, rutaDescripcion: rutaDescripcion,
+    rutaIaGenerado: rutaIaGenerado, rutaPuntos: rutaPuntos, isRuta: true,
+  );
+}
+
+// =============================================================================
 //  HOME SCREEN
-// ─────────────────────────────────────────
+// =============================================================================
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -113,12 +195,15 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
+class _HomeScreenState extends State<HomeScreen>
+    with TickerProviderStateMixin
+    implements HomeNavigator {
+
   int _currentIndex = 0;
-
   Map<String, dynamic>? _itinerarioData;
+  _MapRequest? _pendingMapRequest;
 
-  // ── COLORES MARCA WALI ──
+  // ── COLORES ──
   static const Color bgLight        = Color(0xFFF2FBFF);
   static const Color brandTeal      = Color(0xFF0F988A);
   static const Color brandEmerald   = Color(0xFF197D61);
@@ -131,11 +216,10 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   // ── DATOS ──
   bool _isLoading = true;
   List<PuntoTuristico> _allPuntos = [];
-  List<Ruta> _allRutas = [];
-  List<ZonaRiesgo> _zonas = [];
+  List<Ruta>           _allRutas  = [];
+  List<ZonaRiesgo>     _zonas     = [];
   String? _error;
-
-  String _userName = '';
+  String  _userName = '';
 
   final List<_CategoryFilter> _categories = const [
     _CategoryFilter(label: 'Cultural',    icon: Icons.account_balance_rounded, categoriaIds: [401, 405], tipoRutaIds: [701]),
@@ -149,7 +233,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   int _selectedCategory = 0;
   late final PageController _cardController;
   late final AnimationController _fadeController;
-  late final Animation<double> _fadeAnim;
+  late final Animation<double>   _fadeAnim;
   late final AnimationController _autoScrollController;
 
   final TextEditingController _searchController = TextEditingController();
@@ -166,12 +250,11 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         if (status == AnimationStatus.completed) {
           _autoScrollController.reset();
           if (_cardController.hasClients) {
-            final currentPage = _cardController.page?.round() ?? 0;
-            final itemCount = _filteredCards.length;
-            if (itemCount > 1) {
-              final nextPage = (currentPage + 1) % itemCount;
+            final cur = _cardController.page?.round() ?? 0;
+            final cnt = _filteredCards.length;
+            if (cnt > 1) {
               _cardController.animateToPage(
-                nextPage,
+                (cur + 1) % cnt,
                 duration: const Duration(milliseconds: 500),
                 curve: Curves.easeInOutCubic,
               );
@@ -193,44 +276,27 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   // ─────────────────────────────────────
-  //  SUPABASE: Carga de datos
+  //  SUPABASE
   // ─────────────────────────────────────
   Future<void> _fetchData() async {
     setState(() { _isLoading = true; _error = null; });
     try {
       final sb = Supabase.instance.client;
-
       final userId = sb.auth.currentUser?.id;
       if (userId != null) {
-        final personaRes = await sb
-            .from('personas')
-            .select('nombres')
-            .eq('id_usuario', userId)
-            .maybeSingle();
-        if (personaRes != null) {
-          final nombres = personaRes['nombres'] as String? ?? '';
-          _userName = nombres.split(' ').first;
-        }
+        final p = await sb.from('personas').select('nombres').eq('id_usuario', userId).maybeSingle();
+        if (p != null) _userName = (p['nombres'] as String? ?? '').split(' ').first;
       }
 
-      final pRes = await sb
-          .from('punto_turistico')
+      final pRes = await sb.from('punto_turistico')
           .select('id, nombre, descripcion, imagen_url, precio_nacional, precio_extranjero, id_categoria, latitud, longitud')
-          .eq('estado', true)
-          .order('nombre');
-
-      final rRes = await sb
-          .from('rutas')
+          .eq('estado', true).order('nombre');
+      final rRes = await sb.from('rutas')
           .select('id, nombre, descripcion, ia_generado, id_tipo_ruta')
-          .eq('estado', true)
-          .order('nombre');
-
-      final zRes = await sb
-          .from('zonas_riesgo')
+          .eq('estado', true).order('nombre');
+      final zRes = await sb.from('zonas_riesgo')
           .select('id, nombre, descripcion, id_nivel_riesgo')
-          .eq('estado', true)
-          .order('id_nivel_riesgo', ascending: false)
-          .limit(6);
+          .eq('estado', true).order('id_nivel_riesgo', ascending: false).limit(6);
 
       if (!mounted) return;
       setState(() {
@@ -240,121 +306,128 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         _isLoading = false;
       });
       _fadeController.forward();
-      if (_filteredCards.length > 1) {
-        _autoScrollController.forward();
-      }
+      if (_filteredCards.length > 1) _autoScrollController.forward();
     } catch (e) {
       if (!mounted) return;
       setState(() { _error = e.toString(); _isLoading = false; });
     }
   }
 
-  // ─────────────────────────────────────
-  //  NAVEGACIÓN A DETALLES
-  // ─────────────────────────────────────
+  // =============================================================================
+  //  HomeNavigator — implementación pública
+  //  Llamada desde PlaceDetailScreen y RouteDetailScreen.
+  //  Cierra el detalle (pop), guarda la petición y cambia al tab Mapas (índice 1).
+  //  La barra de navegación del HomeScreen SIEMPRE permanece visible.
+  // =============================================================================
 
-  /// Navega a la pantalla de detalle según si es ruta o punto turístico
+  @override
+  void abrirMapaConPoi({
+    required int     id,
+    required String  nombre,
+    required String  descripcion,
+    required int     idCategoria,
+    required double? lat,
+    required double? lng,
+    required double? precio,
+    required String? imagenUrl,
+  }) {
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    setState(() {
+      _pendingMapRequest = _MapRequest.poi(
+        poiId:          id,
+        poiNombre:      nombre,
+        poiDescripcion: descripcion,
+        poiIdCategoria: idCategoria,
+        poiLat:         lat,
+        poiLng:         lng,
+        poiPrecio:      precio,
+        poiImagenUrl:   imagenUrl,
+      );
+      _currentIndex = 1;
+    });
+  }
+
+  @override
+  void abrirMapaConRuta({
+    required int                   id,
+    required String                nombre,
+    required String                descripcion,
+    required bool                  iaGenerado,
+    required List<RutaPuntoSimple> puntos,
+  }) {
+    if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+    setState(() {
+      _pendingMapRequest = _MapRequest.ruta(
+        rutaId:          id,
+        rutaNombre:      nombre,
+        rutaDescripcion: descripcion,
+        rutaIaGenerado:  iaGenerado,
+        rutaPuntos:      puntos,
+      );
+      _currentIndex = 1;
+    });
+  }
+
+  // ─────────────────────────────────────
+  //  NAVEGACIÓN A DETALLES (carrusel del Home)
+  // ─────────────────────────────────────
   void _navegarADetalle(_CardItem card) {
     if (card.isRuta) {
-      // Buscar la ruta completa
       final ruta = _allRutas.firstWhere(
         (r) => r.id == card.id,
         orElse: () => Ruta(
-          id: card.id,
-          nombre: card.nombre,
-          descripcion: card.descripcion,
-          iaGenerado: card.iaGenerado,
-          idTipoRuta: 701,
+          id: card.id, nombre: card.nombre, descripcion: card.descripcion,
+          iaGenerado: card.iaGenerado, idTipoRuta: 701,
         ),
       );
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => RouteDetailScreen(ruta: ruta),
-        ),
-      );
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => RouteDetailScreen(ruta: ruta, homeState: this),
+      ));
     } else {
-      // Buscar el punto turístico completo
       final punto = _allPuntos.firstWhere(
         (p) => p.id == card.id,
         orElse: () => PuntoTuristico(
-          id: card.id,
-          nombre: card.nombre,
-          descripcion: card.descripcion,
-          imagenUrl: card.imagenUrl,
-          precioNacional: card.precio,
-          idCategoria: 401,
+          id: card.id, nombre: card.nombre, descripcion: card.descripcion,
+          imagenUrl: card.imagenUrl, precioNacional: card.precio, idCategoria: 401,
         ),
       );
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PlaceDetailScreen(punto: punto),
-        ),
-      );
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => PlaceDetailScreen(punto: punto, homeState: this),
+      ));
     }
   }
 
-  /// Navega al detalle de un punto turístico desde destacados
   void _navegarAPuntoDetalle(PuntoTuristico punto) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PlaceDetailScreen(punto: punto),
-      ),
-    );
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => PlaceDetailScreen(punto: punto, homeState: this),
+    ));
   }
 
-  // ── LÓGICA DE ITINERARIOS ──
+  // ── ITINERARIOS ──
   Future<void> _gestionarItinerario() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user == null) return;
-
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Sincronizando itinerario...'), duration: Duration(milliseconds: 800)),
-    );
-
+      const SnackBar(content: Text('Sincronizando itinerario...'), duration: Duration(milliseconds: 800)));
     try {
-      final data = await Supabase.instance.client
-          .from('itinerarios')
-          .select('''
-            *,
-            itinerario_dias (
-              id,
-              numero_dia,
-              fecha_calendario,
-              itinerario_actividades (
-                id,
-                nombre,
-                hora_inicio,
-                hora_fin,
-                precio,
-                es_prioridad,
-                notas_usuario
-              )
-            )
-          ''')
-          .eq('id_persona', user.id)
-          .maybeSingle();
-
-      setState(() {
-        _itinerarioData = data;
-        _currentIndex = 6;
-      });
+      final data = await Supabase.instance.client.from('itinerarios').select('''
+        *, itinerario_dias (id, numero_dia, fecha_calendario,
+          itinerario_actividades (id, nombre, hora_inicio, hora_fin, precio, es_prioridad, notas_usuario))
+      ''').eq('id_persona', user.id).maybeSingle();
+      setState(() { _itinerarioData = data; _currentIndex = 6; });
     } catch (e) {
-      debugPrint("Error: $e");
+      debugPrint('Error: $e');
       setState(() => _currentIndex = 6);
     }
   }
 
   // ─────────────────────────────────────
-  //  FILTRADO DINÁMICO
+  //  FILTRADO
   // ─────────────────────────────────────
   List<_CardItem> get _filteredCards {
     final cat = _categories[_selectedCategory];
     final q   = _searchQuery.toLowerCase();
-    final List<_CardItem> cards = [];
-
+    final cards = <_CardItem>[];
     for (final p in _allPuntos) {
       if (!cat.categoriaIds.contains(p.idCategoria)) continue;
       if (q.isNotEmpty && !p.nombre.toLowerCase().contains(q) && !p.descripcion.toLowerCase().contains(q)) continue;
@@ -365,7 +438,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       if (q.isNotEmpty && !r.nombre.toLowerCase().contains(q) && !r.descripcion.toLowerCase().contains(q)) continue;
       cards.add(_CardItem.fromRuta(r));
     }
-
     if (cards.isEmpty && q.isEmpty) {
       _allPuntos.take(6).forEach((p) => cards.add(_CardItem.fromPunto(p)));
       _allRutas.take(3).forEach((r)  => cards.add(_CardItem.fromRuta(r)));
@@ -376,9 +448,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   List<PuntoTuristico> get _destacados {
     final q = _searchQuery.toLowerCase();
     if (q.isEmpty) return _allPuntos.take(8).toList();
-    return _allPuntos
-        .where((p) => p.nombre.toLowerCase().contains(q) || p.descripcion.toLowerCase().contains(q))
-        .toList();
+    return _allPuntos.where((p) =>
+        p.nombre.toLowerCase().contains(q) || p.descripcion.toLowerCase().contains(q)).toList();
   }
 
   void _onCategoryTap(int index) {
@@ -401,48 +472,39 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       context: context,
       backgroundColor: Colors.transparent,
       isScrollControlled: true,
-      builder: (context) => Container(
-        height: MediaQuery.of(context).size.height * 0.4,
+      builder: (ctx) => Container(
+        height: MediaQuery.of(ctx).size.height * 0.4,
         decoration: const BoxDecoration(
           color: bgLight,
           borderRadius: BorderRadius.vertical(top: Radius.circular(35)),
         ),
         child: Column(children: [
           const SizedBox(height: 12),
-          Center(
-            child: GestureDetector(
-              onTap: () => Navigator.pop(context),
-              child: Container(
-                width: 50, height: 50,
-                decoration: BoxDecoration(
-                  color: brandTeal.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.keyboard_arrow_down_rounded, color: brandTeal, size: 40),
-              ),
-            ),
-          ),
+          Center(child: GestureDetector(
+            onTap: () => Navigator.pop(ctx),
+            child: Container(width: 50, height: 50,
+              decoration: BoxDecoration(color: brandTeal.withValues(alpha: 0.15), shape: BoxShape.circle),
+              child: const Icon(Icons.keyboard_arrow_down_rounded, color: brandTeal, size: 40)),
+          )),
           const SizedBox(height: 20),
-          Expanded(
-            child: GridView.count(
-              crossAxisCount: 3,
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              children: [
-                _buildModuleItem(Icons.route_rounded, 'Itinerarios', brandTeal, () {
-                  Navigator.pop(context);
-                  _gestionarItinerario();
-                }),
-                _buildModuleItem(Icons.payments_outlined, 'Tarifas', brandOrangeOld, () {
-                  Navigator.pop(context);
-                  setState(() => _currentIndex = 4);
-                }),
-                _buildModuleItem(Icons.camera_alt_rounded, 'Analizar Menús', const Color(0xFFE64A19), () {
-                  Navigator.pop(context);
-                  setState(() => _currentIndex = 5);
-                }),
-              ],
-            ),
-          ),
+          Expanded(child: GridView.count(
+            crossAxisCount: 3,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            children: [
+              _buildModuleItem(Icons.route_rounded, 'Itinerarios', brandTeal, () {
+                Navigator.pop(ctx);
+                _gestionarItinerario();
+              }),
+              _buildModuleItem(Icons.payments_outlined, 'Tarifas', brandOrangeOld, () {
+                Navigator.pop(ctx);
+                setState(() => _currentIndex = 4);
+              }),
+              _buildModuleItem(Icons.camera_alt_rounded, 'Analizar Menús', const Color(0xFFE64A19), () {
+                Navigator.pop(ctx);
+                setState(() => _currentIndex = 5);
+              }),
+            ],
+          )),
         ]),
       ),
     );
@@ -452,14 +514,52 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return GestureDetector(
       onTap: onTap,
       child: Column(children: [
-        CircleAvatar(
-          radius: 28,
+        CircleAvatar(radius: 28,
           backgroundColor: color.withValues(alpha: 0.1),
-          child: Icon(icon, color: color, size: 28),
-        ),
+          child: Icon(icon, color: color, size: 28)),
         const SizedBox(height: 8),
         Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
       ]),
+    );
+  }
+
+  // ─────────────────────────────────────
+  //  TAB MAPAS — embebido en IndexedStack
+  // ─────────────────────────────────────
+Widget _buildMapasTab() {
+    final navH = 60.0 + MediaQuery.of(context).padding.bottom;
+    final req  = _pendingMapRequest;
+
+    if (req == null) {
+      return RoutesView(showOwnScaffold: false, bottomNavHeight: navH);
+    }
+
+    if (req.isRuta) {
+      return RoutesViewRutaWrapper(
+        key:             ValueKey('ruta_${req.rutaId}'),   // ← AGREGAR
+        rutaId:          req.rutaId!,
+        rutaNombre:      req.rutaNombre!,
+        rutaDescripcion: req.rutaDescripcion!,
+        rutaIaGenerado:  req.rutaIaGenerado!,
+        puntos:          req.rutaPuntos!,
+        embebido:        true,
+        bottomNavHeight: navH,
+      );
+    }
+
+    return RoutesViewWrapper(
+      key:                  ValueKey('poi_${req.poiId}'),  // ← AGREGAR
+      targetId:             req.poiId!,
+      targetNombre:         req.poiNombre!,
+      targetDescripcion:    req.poiDescripcion!,
+      targetCategoria:      'Sitio Turístico',
+      targetIdCategoria:    req.poiIdCategoria!,
+      targetLat:            req.poiLat,
+      targetLng:            req.poiLng,
+      targetPrecioNacional: req.poiPrecio,
+      targetImagenUrl:      req.poiImagenUrl,
+      embebido:             true,
+      bottomNavHeight:      navH,
     );
   }
 
@@ -474,7 +574,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         index: _currentIndex,
         children: [
           _buildHomeTab(),
-          const RoutesView(),
+          _buildMapasTab(),
           const ChatView(),
           const ProfileView(),
           const RatesView(),
@@ -498,16 +598,16 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         color: Colors.white,
         elevation: 8,
         clipBehavior: Clip.antiAlias,
-        child: SizedBox(
-          height: 60,
-          child: Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
+        child: SizedBox(height: 60, child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
             _buildNavItem(Icons.home_filled,        'Inicio',  0),
             _buildNavItem(Icons.map_outlined,       'Mapas',   1),
             const SizedBox(width: 40),
             _buildNavItem(Icons.smart_toy_outlined, 'Wali IA', 2),
             _buildNavItem(Icons.person_outline,     'Perfil',  3),
-          ]),
-        ),
+          ],
+        )),
       ),
     );
   }
@@ -566,22 +666,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           Row(children: [
             Container(
               width: 36, height: 36,
-              decoration: BoxDecoration(
-                color: brandTeal,
-                borderRadius: BorderRadius.circular(10),
-              ),
+              decoration: BoxDecoration(color: brandTeal, borderRadius: BorderRadius.circular(10)),
               child: const Icon(Icons.explore_rounded, color: Colors.white, size: 22),
             ),
             const SizedBox(width: 8),
-            const Text(
-              'WALI',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                color: brandTeal,
-                letterSpacing: 1.5,
-              ),
-            ),
+            const Text('WALI', style: TextStyle(
+              fontSize: 20, fontWeight: FontWeight.w900, color: brandTeal, letterSpacing: 1.5)),
           ]),
           Row(children: [
             _headerIconBtn(Icons.notifications_outlined),
@@ -600,8 +690,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
       child: Container(
         height: 46,
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
+          color: Colors.white, borderRadius: BorderRadius.circular(14),
           boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 3))],
         ),
         child: TextField(
@@ -615,8 +704,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             suffixIcon: _searchQuery.isNotEmpty
                 ? GestureDetector(
                     onTap: () { _searchController.clear(); setState(() => _searchQuery = ''); },
-                    child: Icon(Icons.close_rounded, color: brandDark.withValues(alpha: 0.38), size: 18),
-                  )
+                    child: Icon(Icons.close_rounded, color: brandDark.withValues(alpha: 0.38), size: 18))
                 : null,
             border: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(vertical: 13),
@@ -630,8 +718,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return Container(
       width: 40, height: 40,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white, borderRadius: BorderRadius.circular(12),
         boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 3))],
       ),
       child: Icon(icon, color: brandDark.withValues(alpha: 0.65), size: 20),
@@ -646,40 +733,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           RichText(
             text: TextSpan(
-              style: const TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-                color: brandDark,
-                letterSpacing: -0.3,
-              ),
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: brandDark, letterSpacing: -0.3),
               children: [
                 const TextSpan(text: '¡Hola, '),
-                TextSpan(
-                  text: displayName,
-                  style: const TextStyle(color: brandTeal),
-                ),
+                TextSpan(text: displayName, style: const TextStyle(color: brandTeal)),
                 const TextSpan(text: '! 👋'),
               ],
             ),
           ),
           const SizedBox(height: 2),
-          Text(
-            '¿A dónde exploramos hoy?',
-            style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.48)),
-          ),
+          Text('¿A dónde exploramos hoy?',
+            style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.48))),
         ])),
         CircleAvatar(
           radius: 22,
           backgroundColor: brandTeal.withValues(alpha: 0.15),
           child: _userName.isNotEmpty
-              ? Text(
-                  _userName[0].toUpperCase(),
-                  style: const TextStyle(
-                    color: brandTeal,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 18,
-                  ),
-                )
+              ? Text(_userName[0].toUpperCase(),
+                  style: const TextStyle(color: brandTeal, fontWeight: FontWeight.w800, fontSize: 18))
               : const Icon(Icons.person_rounded, color: brandTeal, size: 24),
         ),
       ]),
@@ -716,8 +787,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                 const SizedBox(width: 6),
                 Text(cat.label, style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w700,
-                  color: isActive ? Colors.white : brandDark.withValues(alpha: 0.65),
-                )),
+                  color: isActive ? Colors.white : brandDark.withValues(alpha: 0.65))),
               ]),
             ),
           );
@@ -739,29 +809,23 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     opacity: _fadeAnim,
                     child: _filteredCards.isEmpty
                         ? _buildEmptyWidget()
-                        : Column(
-                            children: [
-                              Expanded(
-                                child: PageView.builder(
-                                  controller: _cardController,
-                                  itemCount: _filteredCards.length,
-                                  physics: const BouncingScrollPhysics(),
-                                  onPageChanged: (_) {
-                                    _autoScrollController.reset();
-                                    if (_filteredCards.length > 1) {
-                                      _autoScrollController.forward();
-                                    }
-                                  },
-                                  itemBuilder: (ctx, i) => _buildMainCard(_filteredCards[i], i),
-                                ),
+                        : Column(children: [
+                            Expanded(child: PageView.builder(
+                              controller: _cardController,
+                              itemCount: _filteredCards.length,
+                              physics: const BouncingScrollPhysics(),
+                              onPageChanged: (_) {
+                                _autoScrollController.reset();
+                                if (_filteredCards.length > 1) _autoScrollController.forward();
+                              },
+                              itemBuilder: (ctx, i) => _buildMainCard(_filteredCards[i], i),
+                            )),
+                            if (_filteredCards.length > 1)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 8),
+                                child: _buildPageIndicator(),
                               ),
-                              if (_filteredCards.length > 1)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: _buildPageIndicator(),
-                                ),
-                            ],
-                          ),
+                          ]),
                   ),
       ),
     );
@@ -771,9 +835,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     return AnimatedBuilder(
       animation: _cardController,
       builder: (context, _) {
-        final currentPage = _cardController.hasClients
-            ? (_cardController.page?.round() ?? 0)
-            : 0;
+        final currentPage = _cardController.hasClients ? (_cardController.page?.round() ?? 0) : 0;
         final count = _filteredCards.length;
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -797,11 +859,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
 
   Widget _buildMainCard(_CardItem card, int index) {
     final List<List<Color>> grads = [
-      [brandTeal, brandEmerald],
-      [brandAmber, brandTerracota],
-      [brandEmerald, brandDark],
-      [brandOrange, brandTerracota],
-      [brandDark, brandTeal],
+      [brandTeal, brandEmerald], [brandAmber, brandTerracota],
+      [brandEmerald, brandDark], [brandOrange, brandTerracota], [brandDark, brandTeal],
     ];
     final grad = grads[index % grads.length];
 
@@ -821,30 +880,24 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
             child: Stack(fit: StackFit.expand, children: [
               if (card.imagenUrl != null && card.imagenUrl!.isNotEmpty)
                 Image.network(card.imagenUrl!, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => _gradBox(grad))
+                    errorBuilder: (_, __, ___) => _gradBox(grad))
               else
                 _gradBox(grad),
-              Container(decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black.withValues(alpha: 0.70)],
-                  stops: const [0.28, 1.0],
-                ),
+              Container(decoration: BoxDecoration(gradient: LinearGradient(
+                begin: Alignment.topCenter, end: Alignment.bottomCenter,
+                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.70)],
+                stops: const [0.28, 1.0],
+              ))),
+              Positioned(top: 14, left: 14, child: _badge(
+                icon: card.isRuta ? Icons.route_rounded : Icons.place_rounded,
+                label: card.isRuta ? 'RUTA' : 'POPULAR',
+                color: card.isRuta ? brandAmber : brandTeal,
               )),
-              Positioned(top: 14, left: 14,
-                child: _badge(
-                  icon: card.isRuta ? Icons.route_rounded : Icons.place_rounded,
-                  label: card.isRuta ? 'RUTA' : 'POPULAR',
-                  color: card.isRuta ? brandAmber : brandTeal,
-                )),
               if (card.iaGenerado)
-                Positioned(top: 14, right: 14,
-                  child: _badge(
-                    icon: Icons.auto_awesome,
-                    label: 'IA',
-                    color: Colors.white.withValues(alpha: 0.20),
-                    border: true,
-                  )),
+                Positioned(top: 14, right: 14, child: _badge(
+                  icon: Icons.auto_awesome, label: 'IA',
+                  color: Colors.white.withValues(alpha: 0.20), border: true,
+                )),
               Positioned(left: 16, right: 16, bottom: 14,
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                   Text(card.nombre,
@@ -862,7 +915,6 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                     ],
                     _infoChip(Icons.star_rounded, '4.7'),
                     const Spacer(),
-                    // Botón "Explorar" ahora navega a la pantalla correcta
                     GestureDetector(
                       onTap: () => _navegarADetalle(card),
                       child: Container(
@@ -887,23 +939,21 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   }
 
   Widget _gradBox(List<Color> colors) => Container(
-    decoration: BoxDecoration(
-      gradient: LinearGradient(colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight),
-    ),
-  );
+    decoration: BoxDecoration(gradient: LinearGradient(
+      colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight)));
 
   Widget _badge({required IconData icon, required String label, required Color color, bool border = false}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(20),
+        color: color, borderRadius: BorderRadius.circular(20),
         border: border ? Border.all(color: Colors.white.withValues(alpha: 0.4)) : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 11, color: Colors.white),
         const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.8)),
+        Text(label, style: const TextStyle(
+          fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.8)),
       ]),
     );
   }
@@ -935,13 +985,14 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(width: 8),
         ],
-        Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: brandDark, letterSpacing: -0.2)),
+        Text(title, style: const TextStyle(
+          fontSize: 17, fontWeight: FontWeight.w800, color: brandDark, letterSpacing: -0.2)),
         const Spacer(),
         if (onTap != null)
           GestureDetector(
             onTap: onTap,
-            child: const Text('Ver todo', style: TextStyle(fontSize: 13, color: brandTeal, fontWeight: FontWeight.w600)),
-          ),
+            child: const Text('Ver todo', style: TextStyle(
+              fontSize: 13, color: brandTeal, fontWeight: FontWeight.w600))),
       ]),
     );
   }
@@ -965,7 +1016,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final List<Color> colors = [brandTeal, brandEmerald, brandAmber, brandTerracota, brandOrange, brandDark];
     final color = colors[index % colors.length];
     return GestureDetector(
-      onTap: () => _navegarAPuntoDetalle(p), // ← navega al detalle del punto
+      onTap: () => _navegarAPuntoDetalle(p),
       child: Container(
         width: 138,
         margin: const EdgeInsets.only(right: 12, bottom: 4),
@@ -978,15 +1029,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
           child: Stack(fit: StackFit.expand, children: [
             if (p.imagenUrl != null && p.imagenUrl!.isNotEmpty)
               Image.network(p.imagenUrl!, fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Container(color: color.withValues(alpha: 0.8)))
+                  errorBuilder: (_, __, ___) => Container(color: color.withValues(alpha: 0.8)))
             else
               Container(color: color.withValues(alpha: 0.8)),
-            Container(decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                colors: [Colors.transparent, Colors.black.withValues(alpha: 0.65)],
-              ),
-            )),
+            Container(decoration: BoxDecoration(gradient: LinearGradient(
+              begin: Alignment.topCenter, end: Alignment.bottomCenter,
+              colors: [Colors.transparent, Colors.black.withValues(alpha: 0.65)]))),
             Positioned(bottom: 10, left: 10, right: 10,
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 Text(p.nombre,
@@ -998,8 +1046,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
                   SizedBox(width: 2),
                   Text('4.7', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
                 ]),
-              ]),
-            ),
+              ])),
           ]),
         ),
       ),
@@ -1023,14 +1070,12 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
     final iconColorMap = {801: const Color(0xFFF57C00), 802: const Color(0xFFE53935), 803: const Color(0xFFAD1457)};
     final bgColor   = colorMap[zona.idNivelRiesgo]    ?? const Color(0xFFFFF3E0);
     final iconColor = iconColorMap[zona.idNivelRiesgo] ?? const Color(0xFFF57C00);
-
     return Container(
       width: 210,
       margin: const EdgeInsets.only(right: 10, bottom: 4),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(16),
+        color: bgColor, borderRadius: BorderRadius.circular(16),
         border: Border.all(color: iconColor.withValues(alpha: 0.18)),
         boxShadow: [BoxShadow(color: iconColor.withValues(alpha: 0.07), blurRadius: 8, offset: const Offset(0, 2))],
       ),
@@ -1058,10 +1103,8 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         child: Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [brandEmerald, brandTeal],
-              begin: Alignment.topLeft, end: Alignment.bottomRight,
-            ),
+            gradient: const LinearGradient(colors: [brandEmerald, brandTeal],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(22),
             boxShadow: [BoxShadow(color: brandTeal.withValues(alpha: 0.36), blurRadius: 18, offset: const Offset(0, 6))],
           ),
@@ -1105,8 +1148,7 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
         itemCount: 4,
         itemBuilder: (_, i) => _SkeletonBox(
           width: itemWidth, height: height - 8,
-          margin: const EdgeInsets.only(right: 12, top: 4, bottom: 4),
-        ),
+          margin: const EdgeInsets.only(right: 12, top: 4, bottom: 4)),
       ),
     );
   }
@@ -1131,17 +1173,15 @@ class _HomeScreenState extends State<HomeScreen> with TickerProviderStateMixin {
   Widget _buildEmptyWidget({double height = 238}) {
     return SizedBox(
       height: height,
-      child: Center(child: Text(
-        'Sin resultados para esta categoría',
-        style: TextStyle(color: brandDark.withValues(alpha: 0.42), fontSize: 14),
-      )),
+      child: Center(child: Text('Sin resultados para esta categoría',
+        style: TextStyle(color: brandDark.withValues(alpha: 0.42), fontSize: 14))),
     );
   }
 }
 
-// ─────────────────────────────────────────
+// =============================================================================
 //  MODELOS INTERNOS Y SKELETON
-// ─────────────────────────────────────────
+// =============================================================================
 
 class _CategoryFilter {
   final String label;
@@ -1199,7 +1239,8 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))
+      ..repeat(reverse: true);
     _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
   }
 
@@ -1211,9 +1252,7 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
     return AnimatedBuilder(
       animation: _anim,
       builder: (_, __) => Container(
-        width: widget.width,
-        height: widget.height,
-        margin: widget.margin,
+        width: widget.width, height: widget.height, margin: widget.margin,
         decoration: BoxDecoration(
           color: Color.lerp(const Color(0xFFDCF0FA), const Color(0xFFBCD8EC), _anim.value),
           borderRadius: BorderRadius.circular(widget.radius),
