@@ -1,8 +1,24 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'screens/splash_screen.dart'; // Importamos la nueva pantalla de carga
+import 'screens/mapa_riesgos_screen.dart';
+import 'services/notification_service.dart';
 import 'package:intl/date_symbol_data_local.dart';
+
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+void _handleNotificationResponse(NotificationResponse notificationResponse) {
+  final String? actionId = notificationResponse.actionId;
+  final String? payload = notificationResponse.payload;
+
+  if (actionId == 'open_zonas_riesgo' || payload == 'open_zonas_riesgo') {
+    navigatorKey.currentState?.pushNamed('/mapa_riesgos');
+  } else {
+    debugPrint('Notification tapped: payload=$payload actionId=$actionId');
+  }
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,7 +33,14 @@ Future<void> main() async {
   );
   await initializeDateFormatting('es', null);
 
+  // Inicializa el servicio de notificaciones locales
+  NotificationService().setOnDidReceiveNotificationResponse(_handleNotificationResponse);
+  await NotificationService().init();
+
   runApp(const WaliApp());
+
+  // Mostrar notificación de bienvenida después de arrancar la app
+  Future.microtask(() => NotificationService().showAppStartNotification());
 }
 
 class WaliApp extends StatelessWidget {
@@ -26,6 +49,10 @@ class WaliApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
+      routes: {
+        '/mapa_riesgos': (_) => const MapaRiesgosScreen(),
+      },
       title: 'Wali App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
