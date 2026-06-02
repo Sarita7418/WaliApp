@@ -329,6 +329,15 @@ class _RoutesViewState extends State<RoutesView> with TickerProviderStateMixin {
   bool _audioguiaDisponible = false;
   // ───────────────────────────────────────────────────────────────────────────
 
+  // ── Modo de transporte ─────────────────────────────────────────────────────
+  // 'walking' = Caminando, 'driving' = En Auto
+  String _modoTransporte = 'walking';
+  // Guardamos los últimos waypoints para recalcular al cambiar modo
+  List<String> _ultimosWaypoints = [];
+  String _ultimoDestino = '';
+  bool _calculandoRuta = false;
+  // ───────────────────────────────────────────────────────────────────────────
+
   late final AnimationController _sheetCtrl;
   late final Animation<double>   _sheetAnim;
   late final AnimationController _fabCtrl;
@@ -637,16 +646,21 @@ void _abrirAudioguia() {
   // ===========================================================================
   //  MAPBOX DIRECTIONS API
   // ===========================================================================
-Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
-  if (_userPosition == null) { _snack('Esperando GPS...'); return; }
-  if (poi.latitud == null)   { _snack('Sin coordenadas'); return; }
-  await _calcularRutaMapbox([
-    '${_userPosition!.longitude},${_userPosition!.latitude}',
-    '${poi.longitud},${poi.latitud}',
-  ], poi.nombre);
-  // Siempre intentar cargar audioguía, sin depender del flag tieneAudioguia
-  _cargarAudioguiaDePoi(poi.id);
-}
+
+  Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
+    if (_userPosition == null) { _snack('Esperando GPS...'); return; }
+    if (poi.latitud == null)   { _snack('Sin coordenadas'); return; }
+    final waypoints = [
+      '${_userPosition!.longitude},${_userPosition!.latitude}',
+      '${poi.longitud},${poi.latitud}',
+    ];
+    // Guardamos para poder recalcular al cambiar modo de transporte
+    _ultimosWaypoints = waypoints;
+    _ultimoDestino    = poi.nombre;
+    await _calcularRutaMapbox(waypoints, poi.nombre);
+    // Siempre intentar cargar audioguía, sin depender del flag tieneAudioguia
+    _cargarAudioguiaDePoi(poi.id);
+  }
 
   Future<void> _iniciarNavegacionRuta(_RutaData ruta) async {
     if (_userPosition == null) { _snack('Esperando GPS...'); return; }
@@ -655,17 +669,33 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
       ...ruta.puntos.where((p) => p.latitud != null).map((p) => '${p.longitud},${p.latitud}'),
     ];
     if (wps.length < 2) { _snack('La ruta no tiene coordenadas'); return; }
-    await _calcularRutaMapbox(wps.length > 25 ? wps.sublist(0, 25) : wps, ruta.nombre);
+    final waypoints = wps.length > 25 ? wps.sublist(0, 25) : wps;
+    // Guardamos para poder recalcular al cambiar modo de transporte
+    _ultimosWaypoints = waypoints;
+    _ultimoDestino    = ruta.nombre;
+    await _calcularRutaMapbox(waypoints, ruta.nombre);
+  }
+
+  /// Recalcula la ruta usando los últimos waypoints con el nuevo modo de transporte.
+  Future<void> _recalcularConNuevoModo(String nuevoModo) async {
+    if (_ultimosWaypoints.isEmpty) return;
+    setState(() {
+      _modoTransporte = nuevoModo;
+      _calculandoRuta = true;
+    });
+    await _calcularRutaMapbox(_ultimosWaypoints, _ultimoDestino);
+    if (mounted) setState(() => _calculandoRuta = false);
   }
 
   Future<void> _calcularRutaMapbox(List<String> waypoints, String destino) async {
     final token = dotenv.env['MAPBOX_ACCESS_TOKEN'] ?? '';
+    // Usa el perfil según el modo de transporte seleccionado
+    final perfil = _modoTransporte == 'driving' ? 'driving' : 'walking';
     final url = Uri.parse(
-      'https://api.mapbox.com/directions/v5/mapbox/walking/${waypoints.join(';')}'
+      'https://api.mapbox.com/directions/v5/mapbox/$perfil/${waypoints.join(';')}'
       '?alternatives=false&geometries=geojson&language=es&overview=full&steps=true&access_token=$token',
     );
     try {
-      
       final res = await http.get(url).timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) { _snack('Error al calcular la ruta'); return; }
       final data   = jsonDecode(res.body) as Map<String, dynamic>;
@@ -868,6 +898,7 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
         _camaraLibre = false;
         _rutaTrazada = false; _previaSteps = []; _previaCoords = [];
         _previaDist = ''; _previaTiempo = '';
+        _ultimosWaypoints = []; _ultimoDestino = '';
         // Limpiar audioguía al detener navegación
         _audioguiaActual = null;
         _audioguiaDisponible = false;
@@ -1046,6 +1077,10 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
       _selectedRuta = null;
       _audioguiaActual = null;
       _audioguiaDisponible = false;
+      // Resetear modo y ruta previa al cambiar de POI
+      _modoTransporte = 'walking';
+      _ultimosWaypoints = [];
+      _ultimoDestino = '';
     });
     _sheetCtrl.forward(from: 0);
     if (poi.latitud != null) _flyToCoords(poi.longitud!, poi.latitud! - 0.0008, zoom: 15.5, pitch: 35);
@@ -1057,6 +1092,10 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
       _selectedPoi = null;
       _audioguiaActual = null;
       _audioguiaDisponible = false;
+      // Resetear modo y ruta previa al cambiar de ruta
+      _modoTransporte = 'walking';
+      _ultimosWaypoints = [];
+      _ultimoDestino = '';
     });
     _sheetCtrl.forward(from: 0);
     if (ruta.puntos.isNotEmpty) {
@@ -1075,6 +1114,7 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
         if (!_navActiva) {
           _rutaTrazada = false; _previaSteps = []; _previaCoords = [];
           _previaDist = ''; _previaTiempo = '';
+          _ultimosWaypoints = []; _ultimoDestino = '';
           try {
             if (_polylineManager != null) {
               _mapboxMap?.annotations.removeAnnotationManager(_polylineManager!);
@@ -1298,6 +1338,94 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
       Text('Cargando lugares...', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: brandDark.withValues(alpha: 0.65))),
     ]),
   );
+
+  // ===========================================================================
+  //  SELECTOR DE MODO DE TRANSPORTE  ← NUEVO
+  // ===========================================================================
+
+  /// Widget que aparece entre la descripción y el botón de navegación.
+  /// Muestra dos opciones: Caminando y En Auto.
+  /// Si ya se trazó una ruta, al cambiar el modo la recalcula automáticamente.
+  Widget _buildSelectorModoTransporte() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+      decoration: BoxDecoration(
+        color: brandDark.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(children: [
+        _buildOpcionModo(
+          modo: 'walking',
+          icono: Icons.directions_walk_rounded,
+          label: 'Caminando',
+        ),
+        _buildOpcionModo(
+          modo: 'driving',
+          icono: Icons.directions_car_rounded,
+          label: 'En Auto',
+        ),
+      ]),
+    );
+  }
+
+  Widget _buildOpcionModo({
+    required String modo,
+    required IconData icono,
+    required String label,
+  }) {
+    final isSelected = _modoTransporte == modo;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () {
+          if (_modoTransporte == modo) return;
+          if (_rutaTrazada) {
+            // Ya hay ruta: recalcular con el nuevo modo
+            _recalcularConNuevoModo(modo);
+          } else {
+            setState(() => _modoTransporte = modo);
+          }
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(11),
+            boxShadow: isSelected
+                ? [BoxShadow(
+                    color: brandTeal.withValues(alpha: 0.18),
+                    blurRadius: 8, offset: const Offset(0, 2))]
+                : null,
+          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(
+              icono,
+              size: 18,
+              color: isSelected ? brandEmerald : brandDark.withValues(alpha: 0.38),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                color: isSelected ? brandEmerald : brandDark.withValues(alpha: 0.45),
+              ),
+            ),
+            // Spinner si está recalculando y esta opción está seleccionada
+            if (_calculandoRuta && isSelected) ...[
+              const SizedBox(width: 6),
+              SizedBox(
+                width: 11, height: 11,
+                child: CircularProgressIndicator(strokeWidth: 1.5, color: brandEmerald),
+              ),
+            ],
+          ]),
+        ),
+      ),
+    );
+  }
 
   // ===========================================================================
   //  PANEL NAVEGACIÓN SUPERIOR
@@ -1756,7 +1884,14 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
               style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.58), height: 1.5),
               maxLines: 3, overflow: TextOverflow.ellipsis),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
+          // ── Selector de modo de transporte ── NUEVO ────────────────────
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _buildSelectorModoTransporte(),
+          ),
+          const SizedBox(height: 12),
+          // ──────────────────────────────────────────────────────────────
           Padding(
             padding: EdgeInsets.fromLTRB(16, 0, 16, bottomPad + 52),
             child: _rutaTrazada
@@ -1843,7 +1978,14 @@ Future<void> _iniciarNavegacionPoi(_PoiData poi) async {
             itemCount: ruta.puntos.length,
             itemBuilder: (ctx, i) =>
                 _buildRutaStep(ruta.puntos[i], i, i == ruta.puntos.length - 1))),
+        const SizedBox(height: 10),
+        // ── Selector de modo de transporte ── NUEVO ──────────────────────
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: _buildSelectorModoTransporte(),
+        ),
         const SizedBox(height: 12),
+        // ────────────────────────────────────────────────────────────────
         Padding(
           padding: EdgeInsets.fromLTRB(16, 0, 16,
             widget.bottomNavHeight + MediaQuery.of(context).padding.bottom + 52),
