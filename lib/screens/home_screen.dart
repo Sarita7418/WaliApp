@@ -500,7 +500,7 @@ class _HomeScreenState extends State<HomeScreen>
                 Navigator.pop(ctx);
                 setState(() => _currentIndex = 4);
               }),
-              _buildModuleItem(Icons.camera_alt_rounded, 'Analizar Menús', const Color(0xFFE64A19), () {
+              _buildModuleItem(Icons.camera_alt_rounded, 'Leer menus', const Color(0xFFE64A19), () {
                 Navigator.pop(ctx);
                 setState(() => _currentIndex = 5);
               }),

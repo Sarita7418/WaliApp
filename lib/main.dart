@@ -6,6 +6,8 @@ import 'screens/splash_screen.dart'; // Importamos la nueva pantalla de carga
 import 'screens/mapa_riesgos_screen.dart';
 import 'services/notification_service.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -55,6 +57,15 @@ class WaliApp extends StatelessWidget {
       },
       title: 'Wali App',
       debugShowCheckedModeBanner: false,
+
+      locale: const Locale('es'),
+      supportedLocales: const [Locale('es'), Locale('en')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
