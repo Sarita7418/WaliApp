@@ -75,7 +75,6 @@ class RutaPunto {
 
 class RouteDetailScreen extends StatefulWidget {
   final Ruta ruta;
-  // Usa HomeNavigator (interfaz pública) en lugar de _HomeScreenState (privada)
   final HomeNavigator homeState;
 
   const RouteDetailScreen({
@@ -101,7 +100,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
   bool _isLoading = true;
   List<RutaPunto> _puntos = [];
   String? _error;
-  bool _isFavorite = false;
   int? _expandedIndex;
 
   mbx.MapboxMap? _miniMap;
@@ -241,7 +239,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
               puntosConCoords.first.longitud!,
               puntosConCoords.first.latitud!,
             )),
-            zoom: 14.5,
+            zoom: 15.5,   // ← más cerca
           ),
           mbx.MapAnimationOptions(duration: 500),
         );
@@ -258,13 +256,25 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
           maxLng = math.max(maxLng, p.longitud!);
         }
 
+        // Padding proporcional: cuantos más puntos, menos zoom
+        final spanLat = maxLat - minLat;
+        final spanLng = maxLng - minLng;
+        final maxSpan = math.max(spanLat, spanLng);
+        final zoom = maxSpan < 0.005
+            ? 15.5
+            : maxSpan < 0.01
+                ? 14.5
+                : maxSpan < 0.02
+                    ? 13.5
+                    : 12.5;
+
         await _miniMap!.flyTo(
           mbx.CameraOptions(
             center: mbx.Point(coordinates: mbx.Position(
               (minLng + maxLng) / 2,
               (minLat + maxLat) / 2,
             )),
-            zoom: 13.5,
+            zoom: zoom,
           ),
           mbx.MapAnimationOptions(duration: 500),
         );
@@ -273,12 +283,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  NAVEGACIÓN → MAPA CON BARRA NAV VISIBLE
-  //
-  //  Usa homeState.abrirMapaConRuta (vía HomeNavigator) para:
-  //    1. Hacer pop de esta pantalla
-  //    2. Cambiar al tab Mapas del IndexedStack del HomeScreen
-  //    3. La barra de nav (Inicio/Mapas/Wali IA/Perfil) siempre visible
+  //  NAVEGACIÓN
   // ─────────────────────────────────────
   void _abrirMapaCompleto() {
     if (!mounted) return;
@@ -352,6 +357,15 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
 
   String get _costoEstimado => 'Gratis – Bs. 30';
 
+  // Imágenes de los puntos para el collage del header
+  List<String> get _imagenesRuta {
+    return _puntos
+        .where((p) => p.imagenUrl != null && p.imagenUrl!.isNotEmpty)
+        .map((p) => p.imagenUrl!)
+        .take(4)
+        .toList();
+  }
+
   // ─────────────────────────────────────
   //  BUILD
   // ─────────────────────────────────────
@@ -389,7 +403,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  SLIVER HEADER
+  //  SLIVER HEADER — collage + sin botones favorito/compartir
   // ─────────────────────────────────────
   Widget _buildSliverHeader() {
     return SliverAppBar(
@@ -408,72 +422,24 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
           child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
         ),
       ),
-      actions: [
-        GestureDetector(
-          onTap: () => setState(() => _isFavorite = !_isFavorite),
-          child: Container(
-            margin: const EdgeInsets.all(8),
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-              color: _isFavorite ? const Color(0xFFFF5D7A) : Colors.white,
-              size: 20,
-            ),
-          ),
-        ),
-        GestureDetector(
-          onTap: () {},
-          child: Container(
-            margin: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.share_rounded, color: Colors.white, size: 20),
-          ),
-        ),
-      ],
+      // ── actions eliminados (favorito y compartir) ──
       flexibleSpace: FlexibleSpaceBar(
         stretchModes: const [StretchMode.zoomBackground, StretchMode.blurBackground],
         background: Stack(
           fit: StackFit.expand,
           children: [
-            Container(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [_tipoRutaColor, brandTeal],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-            ),
-            Positioned.fill(
-              child: Opacity(
-                opacity: 0.06,
-                child: GridView.builder(
-                  physics: const NeverScrollableScrollPhysics(),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 8, childAspectRatio: 1,
-                  ),
-                  itemCount: 120,
-                  itemBuilder: (_, i) => Container(
-                    margin: const EdgeInsets.all(2),
-                    decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
-                  ),
-                ),
-              ),
-            ),
+            // ── COLLAGE de imágenes de los puntos de la ruta ──
+            _buildHeaderCollage(),
+            // Overlay degradado sobre el collage
             Container(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
                   begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                  colors: [Colors.transparent, Colors.black.withValues(alpha: 0.55)],
-                  stops: const [0.3, 1.0],
+                  colors: [
+                    Colors.black.withValues(alpha: 0.25),
+                    Colors.black.withValues(alpha: 0.68),
+                  ],
+                  stops: const [0.2, 1.0],
                 ),
               ),
             ),
@@ -514,6 +480,99 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// Collage igual al del HomeScreen: 1-4 imágenes en grid 2×2
+  Widget _buildHeaderCollage() {
+    final imgs = _imagenesRuta;
+
+    // Sin imágenes cargadas aún → gradiente de fondo igual que antes
+    if (imgs.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            colors: [_tipoRutaColor, brandTeal],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Positioned.fill(
+          child: Opacity(
+            opacity: 0.06,
+            child: GridView.builder(
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 8, childAspectRatio: 1,
+              ),
+              itemCount: 120,
+              itemBuilder: (_, i) => Container(
+                margin: const EdgeInsets.all(2),
+                decoration: const BoxDecoration(shape: BoxShape.circle, color: Colors.white),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (imgs.length == 1) {
+      return Image.network(
+        imgs[0],
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _gradientFallback(),
+      );
+    }
+
+    final top    = imgs.take(2).toList();
+    final bottom = imgs.length > 2 ? imgs.skip(2).take(2).toList() : <String>[];
+
+    return Column(children: [
+      Expanded(
+        child: Row(children: [
+          for (int i = 0; i < top.length; i++) ...[
+            Expanded(
+              child: Image.network(
+                top[i],
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    Container(color: _tipoRutaColor.withValues(alpha: 0.6)),
+              ),
+            ),
+            if (i < top.length - 1) const SizedBox(width: 2),
+          ],
+        ]),
+      ),
+      if (bottom.isNotEmpty) ...[
+        const SizedBox(height: 2),
+        Expanded(
+          child: Row(children: [
+            for (int i = 0; i < bottom.length; i++) ...[
+              Expanded(
+                child: Image.network(
+                  bottom[i],
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) =>
+                      Container(color: brandTeal.withValues(alpha: 0.6)),
+                ),
+              ),
+              if (i < bottom.length - 1) const SizedBox(width: 2),
+            ],
+          ]),
+        ),
+      ],
+    ]);
+  }
+
+  Widget _gradientFallback() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [_tipoRutaColor, brandTeal],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
       ),
     );
@@ -602,8 +661,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                     styleUri: mbx.MapboxStyles.STANDARD,
                     cameraOptions: mbx.CameraOptions(
                       center: mbx.Point(coordinates: mbx.Position(-68.1336, -16.4930)),
-                      zoom: 13.5,
-                      pitch: 20,
+                      zoom: 15.5,   // ← más cerca (era 13.5)
+                      pitch: 0,
                       bearing: 0,
                     ),
                     onMapCreated: _onMiniMapCreated,
@@ -626,7 +685,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                         ]),
                       ),
                     ),
-                  // Botón "Ver Mapa Detallado" → usa homeState para mantener barra de nav visible
                   Positioned(
                     bottom: 14, left: 0, right: 0,
                     child: Center(
@@ -866,8 +924,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
                                 if (punto.tieneAudioguia) _audioguiaChip(punto),
                               ]),
                               const SizedBox(height: 10),
-                              // "Ver en el mapa" → punto individual (push normal,
-                              // ya que el RouteDetailScreen no viene del tab Mapas)
                               GestureDetector(
                                 onTap: () {
                                   if (punto.latitud != null) {
@@ -1269,9 +1325,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  BOTTOM CTA — "Comenzar experiencia"
-  //  → usa homeState.abrirMapaConRuta (vía HomeNavigator)
-  //  → la barra de navegación del HomeScreen SIEMPRE visible
+  //  BOTTOM CTA
   // ─────────────────────────────────────
   Widget _buildBottomCta() {
     return Container(

@@ -69,7 +69,6 @@ class RutaRelacionada {
 
 class PlaceDetailScreen extends StatefulWidget {
   final PuntoTuristico punto;
-  // Usa HomeNavigator (interfaz pública) en lugar de _HomeScreenState (privada)
   final HomeNavigator homeState;
 
   const PlaceDetailScreen({
@@ -97,13 +96,12 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   bool _isLoading = true;
   List<AudioguiaData> _audioguias = [];
   List<RutaRelacionada> _rutasRelacionadas = [];
-  bool _isFavorite = false;
   AudioguiaData? _audioguiaActiva;
   bool _audioReproduciendo = false;
 
   // ── MAPA MINI ──
   mbx.MapboxMap? _miniMap;
-  bool _miniMapReady = false;
+  mbx.PointAnnotationManager? _annotationManager;
 
   // ── TABS ──
   late final TabController _tabController;
@@ -165,14 +163,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  NAVEGACIÓN — usa HomeNavigator
-  //  Llama a homeState.abrirMapaConPoi que:
-  //    1. Cierra esta pantalla (pop)
-  //    2. Cambia el IndexedStack al tab Mapas (índice 1)
-  //    3. Pasa los datos del POI al mapa
-  //  La barra de navegación del HomeScreen SIEMPRE permanece visible.
+  //  NAVEGACIÓN
   // ─────────────────────────────────────
-
   void _abrirMapaConEstePunto() {
     widget.homeState.abrirMapaConPoi(
       id:          widget.punto.id,
@@ -186,24 +178,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
     );
   }
 
-  void _mostrarSnackBar(String msg) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: brandTeal,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
   // ─────────────────────────────────────
-  //  MINI MAPA
+  //  MINI MAPA — callbacks
   // ─────────────────────────────────────
   void _onMiniMapCreated(mbx.MapboxMap map) {
     _miniMap = map;
-    _miniMapReady = true;
 
     map.compass.updateSettings(mbx.CompassSettings(enabled: false));
     map.scaleBar.updateSettings(mbx.ScaleBarSettings(enabled: false));
@@ -229,19 +208,35 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   Future<void> _addMiniMapMarker() async {
     if (_miniMap == null) return;
     try {
-      final manager = await _miniMap!.annotations.createPointAnnotationManager();
-      await manager.create(mbx.PointAnnotationOptions(
-        geometry: mbx.Point(coordinates: mbx.Position(
-          widget.punto.longitud!,
-          widget.punto.latitud!,
-        )),
-        iconSize: 1.2,
+      _annotationManager =
+          await _miniMap!.annotations.createPointAnnotationManager();
+
+      // Marcador con icono nativo de Mapbox: location-indicator
+      await _annotationManager!.create(mbx.PointAnnotationOptions(
+        geometry: mbx.Point(
+          coordinates: mbx.Position(
+            widget.punto.longitud!,
+            widget.punto.latitud!,
+          ),
+        ),
+        // Usa el símbolo estándar de Mapbox que siempre está disponible
+        iconImage: 'mapbox-check',
+        iconSize: 2.2,
         iconColor: brandTeal.value,
-        textField: '📍',
-        textSize: 24,
-        textAnchor: mbx.TextAnchor.BOTTOM,
+        iconAnchor: mbx.IconAnchor.BOTTOM,
+        // Texto con el nombre del lugar justo debajo del pin
+        textField: widget.punto.nombre,
+        textSize: 11,
+        textColor: brandDark.value,
+        textHaloColor: Colors.white.value,
+        textHaloWidth: 1.5,
+        textOffset: [0, 0.6],
+        textAnchor: mbx.TextAnchor.TOP,
+        textMaxWidth: 10,
       ));
-    } catch (_) {}
+    } catch (_) {
+      // fallback silencioso
+    }
   }
 
   // ─────────────────────────────────────
@@ -331,7 +326,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  SLIVER HEADER
+  //  SLIVER HEADER — sin botones favorito/compartir
   // ─────────────────────────────────────
   Widget _buildSliverHeader() {
     return SliverAppBar(
@@ -339,6 +334,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       pinned: true,
       stretch: true,
       backgroundColor: brandTeal,
+      // Solo el botón de volver — acciones vacías
       leading: GestureDetector(
         onTap: () => Navigator.pop(context),
         child: Container(
@@ -347,41 +343,16 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
             color: Colors.black.withValues(alpha: 0.35),
             borderRadius: BorderRadius.circular(12),
           ),
-          child: const Icon(Icons.arrow_back_ios_new_rounded, color: Colors.white, size: 18),
+          child: const Icon(Icons.arrow_back_ios_new_rounded,
+              color: Colors.white, size: 18),
         ),
       ),
-      actions: [
-        GestureDetector(
-          onTap: () => setState(() => _isFavorite = !_isFavorite),
-          child: Container(
-            margin: const EdgeInsets.all(8),
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              _isFavorite ? Icons.favorite_rounded : Icons.favorite_border_rounded,
-              color: _isFavorite ? const Color(0xFFFF5D7A) : Colors.white,
-              size: 20,
-            ),
-          ),
-        ),
-        GestureDetector(
-          onTap: () {},
-          child: Container(
-            margin: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: 0.35),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.share_rounded, color: Colors.white, size: 20),
-          ),
-        ),
-      ],
+      actions: const [], // ← botones eliminados
       flexibleSpace: FlexibleSpaceBar(
-        stretchModes: const [StretchMode.zoomBackground, StretchMode.blurBackground],
+        stretchModes: const [
+          StretchMode.zoomBackground,
+          StretchMode.blurBackground,
+        ],
         background: Stack(
           fit: StackFit.expand,
           children: [
@@ -414,7 +385,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                     _buildBadge(_categoriaLabel, brandTeal),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: const Color(0xFFFFC107).withValues(alpha: 0.90),
                         borderRadius: BorderRadius.circular(20),
@@ -422,9 +394,9 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                       child: const Row(mainAxisSize: MainAxisSize.min, children: [
                         Icon(Icons.star_rounded, size: 11, color: Colors.white),
                         SizedBox(width: 3),
-                        Text('4.7',
-                          style: TextStyle(
-                            fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white)),
+                        Text('4.7', style: TextStyle(
+                          fontSize: 10, fontWeight: FontWeight.w800,
+                          color: Colors.white)),
                       ]),
                     ),
                   ]),
@@ -439,13 +411,12 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                   const SizedBox(height: 6),
                   if (widget.punto.latitud != null)
                     const Row(children: [
-                      Icon(Icons.location_on_rounded, size: 13, color: Colors.white70),
+                      Icon(Icons.location_on_rounded,
+                          size: 13, color: Colors.white70),
                       SizedBox(width: 4),
-                      Text(
-                        'La Paz, Bolivia',
-                        style: TextStyle(
-                          fontSize: 13, color: Colors.white70, fontWeight: FontWeight.w600),
-                      ),
+                      Text('La Paz, Bolivia', style: TextStyle(
+                        fontSize: 13, color: Colors.white70,
+                        fontWeight: FontWeight.w600)),
                     ]),
                 ],
               ),
@@ -474,10 +445,13 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       decoration: BoxDecoration(
         color: color,
         borderRadius: BorderRadius.circular(20),
-        border: border ? Border.all(color: Colors.white.withValues(alpha: 0.4)) : null,
+        border: border
+            ? Border.all(color: Colors.white.withValues(alpha: 0.4))
+            : null,
       ),
       child: Text(label, style: const TextStyle(
-        fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.6,
+        fontSize: 10, fontWeight: FontWeight.w800,
+        color: Colors.white, letterSpacing: 0.6,
       )),
     );
   }
@@ -494,8 +468,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
         unselectedLabelColor: brandDark.withValues(alpha: 0.40),
         indicatorColor: brandTeal,
         indicatorWeight: 2.5,
-        labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-        unselectedLabelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+        labelStyle: const TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w800),
+        unselectedLabelStyle: const TextStyle(
+            fontSize: 12, fontWeight: FontWeight.w600),
         tabs: const [
           Tab(text: 'Sobre el lugar'),
           Tab(text: 'Tarifas y Horarios'),
@@ -520,12 +496,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(18),
-              boxShadow: [
-                BoxShadow(
-                  color: brandDark.withValues(alpha: 0.05),
-                  blurRadius: 10, offset: const Offset(0, 3),
-                ),
-              ],
+              boxShadow: [BoxShadow(
+                color: brandDark.withValues(alpha: 0.05),
+                blurRadius: 10, offset: const Offset(0, 3),
+              )],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -540,18 +514,14 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                     child: Icon(_categoriaIcon, size: 16, color: brandTeal),
                   ),
                   const SizedBox(width: 10),
-                  const Text(
-                    'Descripción',
-                    style: TextStyle(
-                      fontSize: 15, fontWeight: FontWeight.w800, color: brandDark),
-                  ),
+                  const Text('Descripción', style: TextStyle(
+                    fontSize: 15, fontWeight: FontWeight.w800, color: brandDark)),
                 ]),
                 const SizedBox(height: 12),
-                Text(
-                  widget.punto.descripcion,
-                  style: TextStyle(
-                    fontSize: 14, color: brandDark.withValues(alpha: 0.65), height: 1.6),
-                ),
+                Text(widget.punto.descripcion, style: TextStyle(
+                  fontSize: 14,
+                  color: brandDark.withValues(alpha: 0.65),
+                  height: 1.6)),
               ],
             ),
           ),
@@ -559,11 +529,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
           _buildMiniMap(),
           const SizedBox(height: 16),
           if (_rutasRelacionadas.isNotEmpty) ...[
-            const Text(
-              'Aparece en estas rutas',
-              style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w800, color: brandDark),
-            ),
+            const Text('Aparece en estas rutas', style: TextStyle(
+              fontSize: 15, fontWeight: FontWeight.w800, color: brandDark)),
             const SizedBox(height: 12),
             ..._rutasRelacionadas.map((r) => _buildRutaRelacionadaCard(r)),
           ],
@@ -573,15 +540,16 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  MINI MAPA — "Ver en el mapa" → cambia al tab Mapas
+  //  MINI MAPA — zoom 17 + marcador mejorado
   // ─────────────────────────────────────
   Widget _buildMiniMap() {
-    final hasCoords = widget.punto.latitud != null && widget.punto.longitud != null;
+    final hasCoords =
+        widget.punto.latitud != null && widget.punto.longitud != null;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
       child: Container(
-        height: 200,
+        height: 210,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
           border: Border.all(color: brandTeal.withValues(alpha: 0.18)),
@@ -593,40 +561,36 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
             else
               Container(
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      brandTeal.withValues(alpha: 0.12),
-                      brandEmerald.withValues(alpha: 0.08),
-                    ],
-                  ),
+                  gradient: LinearGradient(colors: [
+                    brandTeal.withValues(alpha: 0.12),
+                    brandEmerald.withValues(alpha: 0.08),
+                  ]),
                 ),
                 child: CustomPaint(painter: _LocationMapPainter()),
               ),
             Positioned(
-              bottom: 14,
-              left: 0,
-              right: 0,
+              bottom: 14, left: 0, right: 0,
               child: Center(
                 child: GestureDetector(
                   onTap: _abrirMapaConEstePunto,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 18, vertical: 11),
                     decoration: BoxDecoration(
                       color: brandTeal,
                       borderRadius: BorderRadius.circular(14),
-                      boxShadow: [
-                        BoxShadow(
-                          color: brandTeal.withValues(alpha: 0.45),
-                          blurRadius: 14, offset: const Offset(0, 4),
-                        ),
-                      ],
+                      boxShadow: [BoxShadow(
+                        color: brandTeal.withValues(alpha: 0.45),
+                        blurRadius: 14, offset: const Offset(0, 4),
+                      )],
                     ),
                     child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.near_me_rounded, color: Colors.white, size: 16),
+                      Icon(Icons.near_me_rounded,
+                          color: Colors.white, size: 16),
                       SizedBox(width: 7),
-                      Text('Ver en el mapa',
-                        style: TextStyle(
-                          fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white)),
+                      Text('Ver en el mapa', style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700,
+                        color: Colors.white)),
                     ]),
                   ),
                 ),
@@ -645,12 +609,14 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
     return mbx.MapWidget(
       styleUri: mbx.MapboxStyles.STANDARD,
       cameraOptions: mbx.CameraOptions(
-        center: mbx.Point(coordinates: mbx.Position(
-          widget.punto.longitud!,
-          widget.punto.latitud!,
-        )),
-        zoom: 15.0,
-        pitch: 30,
+        center: mbx.Point(
+          coordinates: mbx.Position(
+            widget.punto.longitud!,
+            widget.punto.latitud!,
+          ),
+        ),
+        zoom: 17.0,   // ← más cerca (era 15)
+        pitch: 0,     // plano para ver bien el entorno
         bearing: 0,
       ),
       onMapCreated: _onMiniMapCreated,
@@ -679,12 +645,10 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: brandDark.withValues(alpha: 0.05),
-            blurRadius: 8, offset: const Offset(0, 2),
-          ),
-        ],
+        boxShadow: [BoxShadow(
+          color: brandDark.withValues(alpha: 0.05),
+          blurRadius: 8, offset: const Offset(0, 2),
+        )],
       ),
       child: Row(children: [
         Container(
@@ -697,7 +661,8 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(r.nombre, style: const TextStyle(
               fontSize: 13, fontWeight: FontWeight.w800, color: brandDark)),
             const SizedBox(height: 3),
@@ -715,7 +680,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
           ]),
         ),
         Icon(Icons.arrow_forward_ios_rounded,
-          size: 14, color: brandDark.withValues(alpha: 0.25)),
+            size: 14, color: brandDark.withValues(alpha: 0.25)),
       ]),
     );
   }
@@ -768,11 +733,12 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                 Padding(
                   padding: const EdgeInsets.only(top: 4),
                   child: Row(children: [
-                    Icon(Icons.check_circle_rounded, size: 14, color: brandEmerald),
+                    Icon(Icons.check_circle_rounded,
+                        size: 14, color: brandEmerald),
                     const SizedBox(width: 6),
-                    Text('Entrada libre',
-                      style: TextStyle(
-                        fontSize: 13, fontWeight: FontWeight.w700, color: brandEmerald)),
+                    Text('Entrada libre', style: TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w700,
+                      color: brandEmerald)),
                   ]),
                 ),
             ]),
@@ -785,11 +751,14 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildTransporteRow(Icons.cable_rounded, 'Mi Teleférico', 'Línea Verde – Estación central'),
+                _buildTransporteRow(Icons.cable_rounded, 'Mi Teleférico',
+                    'Línea Verde – Estación central'),
                 const SizedBox(height: 8),
-                _buildTransporteRow(Icons.directions_bus_rounded, 'Bus PumaKatari', 'Ruta al centro histórico'),
+                _buildTransporteRow(Icons.directions_bus_rounded,
+                    'Bus PumaKatari', 'Ruta al centro histórico'),
                 const SizedBox(height: 8),
-                _buildTransporteRow(Icons.local_taxi_rounded, 'Radio Taxi', 'Tarifa estimada Bs. 15–25'),
+                _buildTransporteRow(Icons.local_taxi_rounded, 'Radio Taxi',
+                    'Tarifa estimada Bs. 15–25'),
               ],
             ),
           ),
@@ -809,33 +778,28 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(18),
-        boxShadow: [
-          BoxShadow(
-            color: brandDark.withValues(alpha: 0.05),
-            blurRadius: 10, offset: const Offset(0, 3),
-          ),
-        ],
+        boxShadow: [BoxShadow(
+          color: brandDark.withValues(alpha: 0.05),
+          blurRadius: 10, offset: const Offset(0, 3),
+        )],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Container(
-              padding: const EdgeInsets.all(7),
-              decoration: BoxDecoration(
-                color: iconColor.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(icon, size: 16, color: iconColor),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(7),
+            decoration: BoxDecoration(
+              color: iconColor.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(10),
             ),
-            const SizedBox(width: 10),
-            Text(title, style: const TextStyle(
-              fontSize: 15, fontWeight: FontWeight.w800, color: brandDark)),
-          ]),
-          const SizedBox(height: 14),
-          child,
-        ],
-      ),
+            child: Icon(icon, size: 16, color: iconColor),
+          ),
+          const SizedBox(width: 10),
+          Text(title, style: const TextStyle(
+            fontSize: 15, fontWeight: FontWeight.w800, color: brandDark)),
+        ]),
+        const SizedBox(height: 14),
+        child,
+      ]),
     );
   }
 
@@ -846,7 +810,9 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
         Container(
           width: 8, height: 8,
           decoration: BoxDecoration(
-            color: abierto ? brandEmerald : brandDark.withValues(alpha: 0.25),
+            color: abierto
+                ? brandEmerald
+                : brandDark.withValues(alpha: 0.25),
             shape: BoxShape.circle,
           ),
         ),
@@ -883,18 +849,16 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
         fontSize: 13, fontWeight: FontWeight.w600, color: brandDark)),
       const Spacer(),
       if (precio != null)
-        Text(
-          '$moneda ${precio.toStringAsFixed(0)}',
-          style: TextStyle(
-            fontSize: 18, fontWeight: FontWeight.w900, color: color),
-        )
+        Text('$moneda ${precio.toStringAsFixed(0)}', style: TextStyle(
+          fontSize: 18, fontWeight: FontWeight.w900, color: color))
       else
         Text('Gratis', style: TextStyle(
           fontSize: 15, fontWeight: FontWeight.w700, color: brandEmerald)),
     ]);
   }
 
-  Widget _buildTransporteRow(IconData icon, String nombre, String detalle) {
+  Widget _buildTransporteRow(
+      IconData icon, String nombre, String detalle) {
     return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Container(
         width: 36, height: 36,
@@ -922,38 +886,30 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   // ─────────────────────────────────────
   Widget _buildTabAudioguias() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: brandTeal));
+      return const Center(
+          child: CircularProgressIndicator(color: brandTeal));
     }
 
     if (_audioguias.isEmpty) {
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 80, height: 80,
-              decoration: BoxDecoration(
-                color: brandTeal.withValues(alpha: 0.08),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(Icons.headphones_rounded,
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(
+            width: 80, height: 80,
+            decoration: BoxDecoration(
+              color: brandTeal.withValues(alpha: 0.08),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(Icons.headphones_rounded,
                 size: 36, color: brandTeal.withValues(alpha: 0.50)),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Sin audioguías disponibles',
-              style: TextStyle(
-                fontSize: 15, fontWeight: FontWeight.w700,
-                color: brandDark.withValues(alpha: 0.45)),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Próximamente en más idiomas',
-              style: TextStyle(
-                fontSize: 12, color: brandDark.withValues(alpha: 0.30)),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 16),
+          Text('Sin audioguías disponibles', style: TextStyle(
+            fontSize: 15, fontWeight: FontWeight.w700,
+            color: brandDark.withValues(alpha: 0.45))),
+          const SizedBox(height: 6),
+          Text('Próximamente en más idiomas', style: TextStyle(
+            fontSize: 12, color: brandDark.withValues(alpha: 0.30))),
+        ]),
       );
     }
 
@@ -970,34 +926,34 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
 
     return GestureDetector(
       onTap: () {
-  if (ag.audioUrl == null || ag.audioUrl!.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Audio no disponible')));
-    return;
-  }
-  setState(() => _audioguiaActiva = ag);
-  showModalBottomSheet(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    barrierColor: Colors.transparent,
-    isDismissible: true,
-    enableDrag: true,
-    builder: (_) => Padding(
-      padding: EdgeInsets.only(
-        top: MediaQuery.of(context).size.height * 0.45,
-      ),
-      child: AudioguiaPlayer(audioguia: {
-        'audio_url':    ag.audioUrl!,
-        'nombre_punto': widget.punto.nombre,
-        'descripcion':  ag.descripcionCorta,
-        'duracion':     ag.duracionSegundos,
-      }),
-    ),
-  ).whenComplete(() {
-    if (mounted) setState(() => _audioguiaActiva = null);
-  });
-},
+        if (ag.audioUrl == null || ag.audioUrl!.isEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Audio no disponible')));
+          return;
+        }
+        setState(() => _audioguiaActiva = ag);
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          barrierColor: Colors.transparent,
+          isDismissible: true,
+          enableDrag: true,
+          builder: (_) => Padding(
+            padding: EdgeInsets.only(
+              top: MediaQuery.of(context).size.height * 0.45,
+            ),
+            child: AudioguiaPlayer(audioguia: {
+              'audio_url':    ag.audioUrl!,
+              'nombre_punto': widget.punto.nombre,
+              'descripcion':  ag.descripcionCorta,
+              'duracion':     ag.duracionSegundos,
+            }),
+          ),
+        ).whenComplete(() {
+          if (mounted) setState(() => _audioguiaActiva = null);
+        });
+      },
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 250),
         margin: const EdgeInsets.only(bottom: 12),
@@ -1009,13 +965,11 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
             color: isActiva ? brandTeal : Colors.transparent,
             width: 1.5,
           ),
-          boxShadow: [
-            BoxShadow(
-              color: brandDark.withValues(alpha: isActiva ? 0.10 : 0.05),
-              blurRadius: isActiva ? 14 : 8,
-              offset: const Offset(0, 3),
-            ),
-          ],
+          boxShadow: [BoxShadow(
+            color: brandDark.withValues(alpha: isActiva ? 0.10 : 0.05),
+            blurRadius: isActiva ? 14 : 8,
+            offset: const Offset(0, 3),
+          )],
         ),
         child: Row(children: [
           Container(
@@ -1054,13 +1008,17 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                   fontSize: 14, fontWeight: FontWeight.w800, color: brandDark)),
                 const SizedBox(height: 3),
                 Text(ag.descripcionCorta, style: TextStyle(
-                  fontSize: 11, color: brandDark.withValues(alpha: 0.50), height: 1.3),
+                  fontSize: 11,
+                  color: brandDark.withValues(alpha: 0.50),
+                  height: 1.3),
                   maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 8),
                 Row(children: [
-                  _miniChip(Icons.language_rounded, _idiomaLabel(ag.idIdioma)),
+                  _miniChip(Icons.language_rounded,
+                      _idiomaLabel(ag.idIdioma)),
                   const SizedBox(width: 6),
-                  _miniChip(Icons.timer_rounded, _duracionLabel(ag.duracionSegundos)),
+                  _miniChip(Icons.timer_rounded,
+                      _duracionLabel(ag.duracionSegundos)),
                 ]),
               ],
             ),
@@ -1102,86 +1060,80 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: [brandEmerald, brandTeal],
-          begin: Alignment.topLeft, end: Alignment.bottomRight,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: brandTeal.withValues(alpha: 0.40),
-            blurRadius: 24, offset: const Offset(0, -4),
-          ),
-        ],
+        boxShadow: [BoxShadow(
+          color: brandTeal.withValues(alpha: 0.40),
+          blurRadius: 24, offset: const Offset(0, -4),
+        )],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: 0.35,
-              backgroundColor: Colors.white.withValues(alpha: 0.20),
-              valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
-              minHeight: 3,
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: 0.35,
+            backgroundColor: Colors.white.withValues(alpha: 0.20),
+            valueColor:
+                const AlwaysStoppedAnimation<Color>(Colors.white),
+            minHeight: 3,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(ag.titulo, style: const TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w800,
+                  color: Colors.white),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 2),
+                Text(_idiomaLabel(ag.idIdioma), style: TextStyle(
+                  fontSize: 11,
+                  color: Colors.white.withValues(alpha: 0.70))),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
           Row(children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    ag.titulo,
-                    style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w800, color: Colors.white),
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _idiomaLabel(ag.idIdioma),
-                    style: TextStyle(
-                      fontSize: 11, color: Colors.white.withValues(alpha: 0.70)),
-                  ),
-                ],
-              ),
-            ),
-            Row(children: [
-              _audioBtn(Icons.replay_10_rounded, () {}),
-              const SizedBox(width: 8),
-              GestureDetector(
-                onTap: () => setState(() => _audioReproduciendo = !_audioReproduciendo),
-                child: Container(
-                  width: 44, height: 44,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.20),
-                        blurRadius: 8, offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Icon(
-                    _audioReproduciendo ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                    color: brandEmerald, size: 24,
-                  ),
+            _audioBtn(Icons.replay_10_rounded, () {}),
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => setState(
+                  () => _audioReproduciendo = !_audioReproduciendo),
+              child: Container(
+                width: 44, height: 44,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  boxShadow: [BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.20),
+                    blurRadius: 8, offset: const Offset(0, 2),
+                  )],
+                ),
+                child: Icon(
+                  _audioReproduciendo
+                      ? Icons.pause_rounded
+                      : Icons.play_arrow_rounded,
+                  color: brandEmerald, size: 24,
                 ),
               ),
-              const SizedBox(width: 8),
-              _audioBtn(Icons.forward_10_rounded, () {}),
-              const SizedBox(width: 12),
-              GestureDetector(
-                onTap: () => setState(() {
-                  _audioguiaActiva = null;
-                  _audioReproduciendo = false;
-                }),
-                child: Icon(Icons.close_rounded,
+            ),
+            const SizedBox(width: 8),
+            _audioBtn(Icons.forward_10_rounded, () {}),
+            const SizedBox(width: 12),
+            GestureDetector(
+              onTap: () => setState(() {
+                _audioguiaActiva = null;
+                _audioReproduciendo = false;
+              }),
+              child: Icon(Icons.close_rounded,
                   color: Colors.white.withValues(alpha: 0.70), size: 20),
-              ),
-            ]),
+            ),
           ]),
-        ],
-      ),
+        ]),
+      ]),
     );
   }
 
@@ -1200,10 +1152,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
   }
 
   // ─────────────────────────────────────
-  //  BOTTOM CTA — "Comenzar experiencia"
-  //  → llama a homeState.abrirMapaConPoi (vía HomeNavigator)
-  //  → cierra esta pantalla y cambia al tab Mapas
-  //  → la barra de navegación del HomeScreen SIEMPRE visible
+  //  BOTTOM CTA
   // ─────────────────────────────────────
   Widget _buildBottomCta() {
     return Container(
@@ -1213,33 +1162,30 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
       ),
       decoration: BoxDecoration(
         color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: brandDark.withValues(alpha: 0.10),
-            blurRadius: 20, offset: const Offset(0, -4),
-          ),
-        ],
+        boxShadow: [BoxShadow(
+          color: brandDark.withValues(alpha: 0.10),
+          blurRadius: 20, offset: const Offset(0, -4),
+        )],
       ),
       child: Row(children: [
         Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('ENTRADA', style: TextStyle(
             fontSize: 9, fontWeight: FontWeight.w800,
-            color: brandDark.withValues(alpha: 0.40), letterSpacing: 0.8,
-          )),
+            color: brandDark.withValues(alpha: 0.40), letterSpacing: 0.8)),
           const SizedBox(height: 2),
           Text(
             widget.punto.precioNacional != null
                 ? 'Bs. ${widget.punto.precioNacional!.toStringAsFixed(0)}'
                 : 'Gratis',
             style: const TextStyle(
-              fontSize: 18, fontWeight: FontWeight.w900, color: brandDark),
-          ),
+              fontSize: 18, fontWeight: FontWeight.w900, color: brandDark)),
         ]),
         const Spacer(),
         GestureDetector(
           onTap: _abrirMapaConEstePunto,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 24, vertical: 14),
             decoration: BoxDecoration(
               gradient: const LinearGradient(
                 colors: [brandEmerald, brandTeal],
@@ -1247,19 +1193,18 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
                 end: Alignment.bottomRight,
               ),
               borderRadius: BorderRadius.circular(16),
-              boxShadow: [
-                BoxShadow(
-                  color: brandTeal.withValues(alpha: 0.42),
-                  blurRadius: 16, offset: const Offset(0, 5),
-                ),
-              ],
+              boxShadow: [BoxShadow(
+                color: brandTeal.withValues(alpha: 0.42),
+                blurRadius: 16, offset: const Offset(0, 5),
+              )],
             ),
             child: const Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.play_circle_outline_rounded, color: Colors.white, size: 18),
+              Icon(Icons.play_circle_outline_rounded,
+                  color: Colors.white, size: 18),
               SizedBox(width: 8),
-              Text('Comenzar experiencia',
-                style: TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w800, color: Colors.white)),
+              Text('Comenzar experiencia', style: TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w800,
+                color: Colors.white)),
             ]),
           ),
         ),
@@ -1269,7 +1214,7 @@ class _PlaceDetailScreenState extends State<PlaceDetailScreen>
 }
 
 // ─────────────────────────────────────────
-//  CUSTOM PAINTER
+//  CUSTOM PAINTER (fallback sin coordenadas)
 // ─────────────────────────────────────────
 
 class _LocationMapPainter extends CustomPainter {
@@ -1290,10 +1235,8 @@ class _LocationMapPainter extends CustomPainter {
     final cx = size.width / 2;
     final cy = size.height / 2;
 
-    canvas.drawCircle(
-      Offset(cx, cy), 30,
-      Paint()..color = const Color(0xFF0F988A).withValues(alpha: 0.12),
-    );
+    canvas.drawCircle(Offset(cx, cy), 30,
+        Paint()..color = const Color(0xFF0F988A).withValues(alpha: 0.12));
     canvas.drawCircle(
       Offset(cx, cy), 30,
       Paint()
@@ -1302,9 +1245,7 @@ class _LocationMapPainter extends CustomPainter {
         ..strokeWidth = 1.5,
     );
     canvas.drawCircle(
-      Offset(cx, cy), 8,
-      Paint()..color = const Color(0xFF0F988A),
-    );
+        Offset(cx, cy), 8, Paint()..color = const Color(0xFF0F988A));
     canvas.drawCircle(
       Offset(cx, cy), 8,
       Paint()
