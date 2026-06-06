@@ -60,6 +60,7 @@ class Ruta {
   final String descripcion;
   final bool iaGenerado;
   final int idTipoRuta;
+  final List<String> imagenesPuntos;
 
   const Ruta({
     required this.id,
@@ -67,6 +68,7 @@ class Ruta {
     required this.descripcion,
     required this.iaGenerado,
     required this.idTipoRuta,
+    this.imagenesPuntos = const [],
   });
 
   factory Ruta.fromMap(Map<String, dynamic> map) {
@@ -78,6 +80,12 @@ class Ruta {
       idTipoRuta: map['id_tipo_ruta'] as int? ?? 0,
     );
   }
+
+  Ruta copyWith({List<String>? imagenesPuntos}) => Ruta(
+    id: id, nombre: nombre, descripcion: descripcion,
+    iaGenerado: iaGenerado, idTipoRuta: idTipoRuta,
+    imagenesPuntos: imagenesPuntos ?? this.imagenesPuntos,
+  );
 }
 
 class ZonaRiesgo {
@@ -104,8 +112,7 @@ class ZonaRiesgo {
 }
 
 // =============================================================================
-//  INTERFAZ PÚBLICA — permite que PlaceDetail y RouteDetail cambien el tab
-//  sin depender de _HomeScreenState (que es privada al archivo)
+//  INTERFAZ PÚBLICA
 // =============================================================================
 
 abstract class HomeNavigator {
@@ -284,26 +291,57 @@ class _HomeScreenState extends State<HomeScreen>
     try {
       final sb = Supabase.instance.client;
       final userId = sb.auth.currentUser?.id;
-      if (userId != null) {
-        final p = await sb.from('personas').select('nombres').eq('id_usuario', userId).maybeSingle();
-        if (p != null) _userName = (p['nombres'] as String? ?? '').split(' ').first;
-      }
 
-      final pRes = await sb.from('punto_turistico')
-          .select('id, nombre, descripcion, imagen_url, precio_nacional, precio_extranjero, id_categoria, latitud, longitud')
-          .eq('estado', true).order('nombre');
-      final rRes = await sb.from('rutas')
-          .select('id, nombre, descripcion, ia_generado, id_tipo_ruta')
-          .eq('estado', true).order('nombre');
-      final zRes = await sb.from('zonas_riesgo')
-          .select('id, nombre, descripcion, id_nivel_riesgo')
-          .eq('estado', true).order('id_nivel_riesgo', ascending: false).limit(6);
+      final results = await Future.wait([
+        userId != null
+            ? sb.from('personas').select('nombres').eq('id_usuario', userId).maybeSingle()
+            : Future.value(null),
+        sb.from('punto_turistico')
+            .select('id, nombre, descripcion, imagen_url, precio_nacional, precio_extranjero, id_categoria, latitud, longitud')
+            .eq('estado', true).order('nombre'),
+        sb.from('rutas')
+            .select('id, nombre, descripcion, ia_generado, id_tipo_ruta')
+            .eq('estado', true).order('nombre'),
+        sb.from('zonas_riesgo')
+            .select('id, nombre, descripcion, id_nivel_riesgo')
+            .eq('estado', true).order('id_nivel_riesgo', ascending: false).limit(6),
+        sb.from('ruta_puntos')
+            .select('id_ruta, punto_turistico(imagen_url)')
+            .order('orden'),
+      ]);
 
       if (!mounted) return;
+
+      final persona = results[0] as Map<String, dynamic>?;
+      if (persona != null) {
+        _userName = (persona['nombres'] as String? ?? '').split(' ').first;
+      }
+
+      final puntos = (results[1] as List).map((e) => PuntoTuristico.fromMap(e)).toList();
+      final rutasBase = (results[2] as List).map((e) => Ruta.fromMap(e)).toList();
+
+      final rutaPuntosData = results[4] as List;
+      final Map<int, List<String>> imagenesPorRuta = {};
+      for (final rp in rutaPuntosData) {
+        final idRuta = rp['id_ruta'] as int?;
+        final punto = rp['punto_turistico'] as Map<String, dynamic>?;
+        final imgUrl = punto?['imagen_url'] as String?;
+        if (idRuta != null && imgUrl != null && imgUrl.isNotEmpty) {
+          imagenesPorRuta.putIfAbsent(idRuta, () => []);
+          if ((imagenesPorRuta[idRuta]!.length) < 4) {
+            imagenesPorRuta[idRuta]!.add(imgUrl);
+          }
+        }
+      }
+
+      final rutasConImagenes = rutasBase.map((r) =>
+        r.copyWith(imagenesPuntos: imagenesPorRuta[r.id] ?? [])
+      ).toList();
+
       setState(() {
-        _allPuntos = (pRes as List).map((e) => PuntoTuristico.fromMap(e)).toList();
-        _allRutas  = (rRes  as List).map((e) => Ruta.fromMap(e)).toList();
-        _zonas     = (zRes  as List).map((e) => ZonaRiesgo.fromMap(e)).toList();
+        _allPuntos = puntos;
+        _allRutas  = rutasConImagenes;
+        _zonas     = (results[3] as List).map((e) => ZonaRiesgo.fromMap(e)).toList();
         _isLoading = false;
       });
       _fadeController.forward();
@@ -315,10 +353,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // =============================================================================
-  //  HomeNavigator — implementación pública
-  //  Llamada desde PlaceDetailScreen y RouteDetailScreen.
-  //  Cierra el detalle (pop), guarda la petición y cambia al tab Mapas (índice 1).
-  //  La barra de navegación del HomeScreen SIEMPRE permanece visible.
+  //  HomeNavigator
   // =============================================================================
 
   @override
@@ -335,14 +370,9 @@ class _HomeScreenState extends State<HomeScreen>
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
     setState(() {
       _pendingMapRequest = _MapRequest.poi(
-        poiId:          id,
-        poiNombre:      nombre,
-        poiDescripcion: descripcion,
-        poiIdCategoria: idCategoria,
-        poiLat:         lat,
-        poiLng:         lng,
-        poiPrecio:      precio,
-        poiImagenUrl:   imagenUrl,
+        poiId: id, poiNombre: nombre, poiDescripcion: descripcion,
+        poiIdCategoria: idCategoria, poiLat: lat, poiLng: lng,
+        poiPrecio: precio, poiImagenUrl: imagenUrl,
       );
       _currentIndex = 1;
     });
@@ -359,18 +389,15 @@ class _HomeScreenState extends State<HomeScreen>
     if (Navigator.of(context).canPop()) Navigator.of(context).pop();
     setState(() {
       _pendingMapRequest = _MapRequest.ruta(
-        rutaId:          id,
-        rutaNombre:      nombre,
-        rutaDescripcion: descripcion,
-        rutaIaGenerado:  iaGenerado,
-        rutaPuntos:      puntos,
+        rutaId: id, rutaNombre: nombre, rutaDescripcion: descripcion,
+        rutaIaGenerado: iaGenerado, rutaPuntos: puntos,
       );
       _currentIndex = 1;
     });
   }
 
   // ─────────────────────────────────────
-  //  NAVEGACIÓN A DETALLES (carrusel del Home)
+  //  NAVEGACIÓN A DETALLES
   // ─────────────────────────────────────
   void _navegarADetalle(_CardItem card) {
     if (card.isRuta) {
@@ -404,6 +431,12 @@ class _HomeScreenState extends State<HomeScreen>
     ));
   }
 
+  void _navegarARutaDetalle(Ruta ruta) {
+    Navigator.push(context, MaterialPageRoute(
+      builder: (_) => RouteDetailScreen(ruta: ruta, homeState: this),
+    ));
+  }
+
   // ── ITINERARIOS ──
   Future<void> _gestionarItinerario() async {
     final user = Supabase.instance.client.auth.currentUser;
@@ -420,6 +453,29 @@ class _HomeScreenState extends State<HomeScreen>
       debugPrint('Error: $e');
       setState(() => _currentIndex = 6);
     }
+  }
+
+  // ─────────────────────────────────────
+  //  MODAL VER TODO
+  // ─────────────────────────────────────
+  void _showVerTodoModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _VerTodoModal(
+        allPuntos: _allPuntos,
+        allRutas: _allRutas,
+        onSelectPunto: (p) {
+          Navigator.pop(context);
+          _navegarAPuntoDetalle(p);
+        },
+        onSelectRuta: (r) {
+          Navigator.pop(context);
+          _navegarARutaDetalle(r);
+        },
+      ),
+    );
   }
 
   // ─────────────────────────────────────
@@ -525,9 +581,9 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ─────────────────────────────────────
-  //  TAB MAPAS — embebido en IndexedStack
+  //  TAB MAPAS
   // ─────────────────────────────────────
-Widget _buildMapasTab() {
+  Widget _buildMapasTab() {
     final navH = 60.0 + MediaQuery.of(context).padding.bottom;
     final req  = _pendingMapRequest;
 
@@ -537,7 +593,7 @@ Widget _buildMapasTab() {
 
     if (req.isRuta) {
       return RoutesViewRutaWrapper(
-        key:             ValueKey('ruta_${req.rutaId}'),   // ← AGREGAR
+        key:             ValueKey('ruta_${req.rutaId}'),
         rutaId:          req.rutaId!,
         rutaNombre:      req.rutaNombre!,
         rutaDescripcion: req.rutaDescripcion!,
@@ -549,7 +605,7 @@ Widget _buildMapasTab() {
     }
 
     return RoutesViewWrapper(
-      key:                  ValueKey('poi_${req.poiId}'),  // ← AGREGAR
+      key:                  ValueKey('poi_${req.poiId}'),
       targetId:             req.poiId!,
       targetNombre:         req.poiNombre!,
       targetDescripcion:    req.poiDescripcion!,
@@ -569,6 +625,8 @@ Widget _buildMapasTab() {
   // ─────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) return _buildLoadingScreen();
+
     return Scaffold(
       backgroundColor: bgLight,
       body: IndexedStack(
@@ -613,6 +671,38 @@ Widget _buildMapasTab() {
     );
   }
 
+  Widget _buildLoadingScreen() {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Image.asset(
+                'assets/images/logoWALI.jpeg',
+                width: 90, height: 90, fit: BoxFit.cover,
+              ),
+            ),
+            const SizedBox(height: 20),
+            const Text('WALI',
+              style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900,
+                  color: brandTeal, letterSpacing: 6)),
+            const SizedBox(height: 6),
+            Text('Cargando tu experiencia...',
+              style: TextStyle(fontSize: 13,
+                  color: brandDark.withValues(alpha: 0.45),
+                  fontWeight: FontWeight.w500)),
+            const SizedBox(height: 32),
+            const SizedBox(width: 36, height: 36,
+              child: CircularProgressIndicator(color: brandTeal, strokeWidth: 3)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildNavItem(IconData icon, String label, int index) {
     final isSelected = _currentIndex == index;
     return InkWell(
@@ -640,7 +730,11 @@ Widget _buildMapasTab() {
           SliverToBoxAdapter(child: _buildSearchBar()),
           SliverToBoxAdapter(child: _buildCategoryFilters()),
           SliverToBoxAdapter(child: _buildCarousel()),
-          SliverToBoxAdapter(child: _buildSectionHeader('Destacados en La Paz', onTap: () {})),
+          // ← onTap ahora llama al modal
+          SliverToBoxAdapter(child: _buildSectionHeader(
+            'Destacados en La Paz',
+            onTap: _showVerTodoModal,
+          )),
           SliverToBoxAdapter(child: _buildDestacadosGrid()),
           if (_zonas.isNotEmpty) ...[
             SliverToBoxAdapter(child: _buildSectionHeader(
@@ -666,18 +760,25 @@ Widget _buildMapasTab() {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Row(children: [
-            Container(
-              width: 36, height: 36,
-              decoration: BoxDecoration(color: brandTeal, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.explore_rounded, color: Colors.white, size: 22),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: Image.asset('assets/images/logoWALI.jpeg',
+                  width: 36, height: 36, fit: BoxFit.cover),
             ),
             const SizedBox(width: 8),
             const Text('WALI', style: TextStyle(
-              fontSize: 20, fontWeight: FontWeight.w900, color: brandTeal, letterSpacing: 1.5)),
+                fontSize: 20, fontWeight: FontWeight.w900,
+                color: brandTeal, letterSpacing: 1.5)),
           ]),
-          Row(children: [
-            _headerIconBtn(Icons.tune_rounded),
-          ]),
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: brandTeal.withValues(alpha: 0.15),
+            child: _userName.isNotEmpty
+                ? Text(_userName[0].toUpperCase(),
+                    style: const TextStyle(color: brandTeal,
+                        fontWeight: FontWeight.w800, fontSize: 18))
+                : const Icon(Icons.person_rounded, color: brandTeal, size: 24),
+          ),
         ],
       ),
     );
@@ -691,7 +792,8 @@ Widget _buildMapasTab() {
         height: 46,
         decoration: BoxDecoration(
           color: Colors.white, borderRadius: BorderRadius.circular(14),
-          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 3))],
+          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06),
+              blurRadius: 10, offset: const Offset(0, 3))],
         ),
         child: TextField(
           controller: _searchController,
@@ -700,11 +802,16 @@ Widget _buildMapasTab() {
           decoration: InputDecoration(
             hintText: '¿Qué quieres explorar hoy?',
             hintStyle: TextStyle(color: brandDark.withValues(alpha: 0.38), fontSize: 14),
-            prefixIcon: Icon(Icons.search_rounded, color: brandDark.withValues(alpha: 0.38), size: 20),
+            prefixIcon: Icon(Icons.search_rounded,
+                color: brandDark.withValues(alpha: 0.38), size: 20),
             suffixIcon: _searchQuery.isNotEmpty
                 ? GestureDetector(
-                    onTap: () { _searchController.clear(); setState(() => _searchQuery = ''); },
-                    child: Icon(Icons.close_rounded, color: brandDark.withValues(alpha: 0.38), size: 18))
+                    onTap: () {
+                      _searchController.clear();
+                      setState(() => _searchQuery = '');
+                    },
+                    child: Icon(Icons.close_rounded,
+                        color: brandDark.withValues(alpha: 0.38), size: 18))
                 : null,
             border: InputBorder.none,
             contentPadding: const EdgeInsets.symmetric(vertical: 13),
@@ -714,45 +821,26 @@ Widget _buildMapasTab() {
     );
   }
 
-  Widget _headerIconBtn(IconData icon) {
-    return Container(
-      width: 40, height: 40,
-      decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(12),
-        boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 3))],
-      ),
-      child: Icon(icon, color: brandDark.withValues(alpha: 0.65), size: 20),
-    );
-  }
-
   Widget _buildGreeting() {
     final displayName = _userName.isNotEmpty ? _userName : 'Explorer';
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
-      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          RichText(
-            text: TextSpan(
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: brandDark, letterSpacing: -0.3),
-              children: [
-                const TextSpan(text: '¡Hola, '),
-                TextSpan(text: displayName, style: const TextStyle(color: brandTeal)),
-                const TextSpan(text: '!'),
-              ],
-            ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        RichText(
+          text: TextSpan(
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800,
+                color: brandDark, letterSpacing: -0.3),
+            children: [
+              const TextSpan(text: '¡Hola, '),
+              TextSpan(text: displayName,
+                  style: const TextStyle(color: brandTeal)),
+              const TextSpan(text: '!'),
+            ],
           ),
-          const SizedBox(height: 2),
-          Text('¿A dónde exploramos hoy?',
-            style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.48))),
-        ])),
-        CircleAvatar(
-          radius: 22,
-          backgroundColor: brandTeal.withValues(alpha: 0.15),
-          child: _userName.isNotEmpty
-              ? Text(_userName[0].toUpperCase(),
-                  style: const TextStyle(color: brandTeal, fontWeight: FontWeight.w800, fontSize: 18))
-              : const Icon(Icons.person_rounded, color: brandTeal, size: 24),
         ),
+        const SizedBox(height: 2),
+        Text('¿A dónde exploramos hoy?',
+          style: TextStyle(fontSize: 13, color: brandDark.withValues(alpha: 0.48))),
       ]),
     );
   }
@@ -777,13 +865,17 @@ Widget _buildMapasTab() {
               decoration: BoxDecoration(
                 color: isActive ? brandEmerald : Colors.white,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: isActive ? brandEmerald : brandDark.withValues(alpha: 0.10)),
+                border: Border.all(
+                    color: isActive ? brandEmerald : brandDark.withValues(alpha: 0.10)),
                 boxShadow: isActive
-                    ? [BoxShadow(color: brandEmerald.withValues(alpha: 0.28), blurRadius: 10, offset: const Offset(0, 4))]
-                    : [BoxShadow(color: brandDark.withValues(alpha: 0.04), blurRadius: 5)],
+                    ? [BoxShadow(color: brandEmerald.withValues(alpha: 0.28),
+                        blurRadius: 10, offset: const Offset(0, 4))]
+                    : [BoxShadow(color: brandDark.withValues(alpha: 0.04),
+                        blurRadius: 5)],
               ),
               child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(cat.icon, size: 15, color: isActive ? Colors.white : brandDark.withValues(alpha: 0.55)),
+                Icon(cat.icon, size: 15,
+                    color: isActive ? Colors.white : brandDark.withValues(alpha: 0.55)),
                 const SizedBox(width: 6),
                 Text(cat.label, style: TextStyle(
                   fontSize: 13, fontWeight: FontWeight.w700,
@@ -816,9 +908,12 @@ Widget _buildMapasTab() {
                               physics: const BouncingScrollPhysics(),
                               onPageChanged: (_) {
                                 _autoScrollController.reset();
-                                if (_filteredCards.length > 1) _autoScrollController.forward();
+                                if (_filteredCards.length > 1) {
+                                  _autoScrollController.forward();
+                                }
                               },
-                              itemBuilder: (ctx, i) => _buildMainCard(_filteredCards[i], i),
+                              itemBuilder: (ctx, i) =>
+                                  _buildMainCard(_filteredCards[i], i),
                             )),
                             if (_filteredCards.length > 1)
                               Padding(
@@ -835,7 +930,8 @@ Widget _buildMapasTab() {
     return AnimatedBuilder(
       animation: _cardController,
       builder: (context, _) {
-        final currentPage = _cardController.hasClients ? (_cardController.page?.round() ?? 0) : 0;
+        final currentPage =
+            _cardController.hasClients ? (_cardController.page?.round() ?? 0) : 0;
         final count = _filteredCards.length;
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -857,10 +953,41 @@ Widget _buildMapasTab() {
     );
   }
 
+  Widget _buildCollage(List<String> imgs, List<Color> grad) {
+    if (imgs.isEmpty) return _gradBox(grad);
+    if (imgs.length == 1) {
+      return Image.network(imgs[0], fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _gradBox(grad));
+    }
+    final top    = imgs.take(2).toList();
+    final bottom = imgs.length > 2 ? imgs.skip(2).take(2).toList() : <String>[];
+    return Column(children: [
+      Expanded(child: Row(children: [
+        for (int i = 0; i < top.length; i++) ...[
+          Expanded(child: Image.network(top[i], fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => Container(color: grad[0]))),
+          if (i < top.length - 1) const SizedBox(width: 2),
+        ],
+      ])),
+      if (bottom.isNotEmpty) ...[
+        const SizedBox(height: 2),
+        Expanded(child: Row(children: [
+          for (int i = 0; i < bottom.length; i++) ...[
+            Expanded(child: Image.network(bottom[i], fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) =>
+                    Container(color: grad[1 % grad.length]))),
+            if (i < bottom.length - 1) const SizedBox(width: 2),
+          ],
+        ])),
+      ],
+    ]);
+  }
+
   Widget _buildMainCard(_CardItem card, int index) {
     final List<List<Color>> grads = [
       [brandTeal, brandEmerald], [brandAmber, brandTerracota],
-      [brandEmerald, brandDark], [brandOrange, brandTerracota], [brandDark, brandTeal],
+      [brandEmerald, brandDark], [brandOrange, brandTerracota],
+      [brandDark, brandTeal],
     ];
     final grad = grads[index % grads.length];
 
@@ -873,12 +1000,15 @@ Widget _buildMapasTab() {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(24),
-            boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.14), blurRadius: 18, offset: const Offset(0, 6))],
+            boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.14),
+                blurRadius: 18, offset: const Offset(0, 6))],
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(24),
             child: Stack(fit: StackFit.expand, children: [
-              if (card.imagenUrl != null && card.imagenUrl!.isNotEmpty)
+              if (card.isRuta && card.imagenesPuntos.isNotEmpty)
+                _buildCollage(card.imagenesPuntos, grad)
+              else if (card.imagenUrl != null && card.imagenUrl!.isNotEmpty)
                 Image.network(card.imagenUrl!, fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => _gradBox(grad))
               else
@@ -899,18 +1029,22 @@ Widget _buildMapasTab() {
                   color: Colors.white.withValues(alpha: 0.20), border: true,
                 )),
               Positioned(left: 16, right: 16, bottom: 14,
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min, children: [
                   Text(card.nombre,
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Colors.white, height: 1.2),
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800,
+                        color: Colors.white, height: 1.2),
                     maxLines: 2, overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 5),
                   Text(card.descripcion,
-                    style: TextStyle(fontSize: 12, color: Colors.white.withValues(alpha: 0.80), height: 1.3),
+                    style: TextStyle(fontSize: 12,
+                        color: Colors.white.withValues(alpha: 0.80), height: 1.3),
                     maxLines: 2, overflow: TextOverflow.ellipsis),
                   const SizedBox(height: 10),
                   Row(children: [
                     if (!card.isRuta && card.precio != null) ...[
-                      _infoChip(Icons.sell_rounded, 'Bs. ${card.precio!.toStringAsFixed(0)}'),
+                      _infoChip(Icons.sell_rounded,
+                          'Bs. ${card.precio!.toStringAsFixed(0)}'),
                       const SizedBox(width: 6),
                     ],
                     _infoChip(Icons.star_rounded, '4.7'),
@@ -918,14 +1052,17 @@ Widget _buildMapasTab() {
                     GestureDetector(
                       onTap: () => _navegarADetalle(card),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 7),
                         decoration: BoxDecoration(
                           color: Colors.white.withValues(alpha: 0.18),
                           borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.35)),
+                          border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.35)),
                         ),
                         child: const Text('Explorar →',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+                          style: TextStyle(fontSize: 12,
+                              fontWeight: FontWeight.w700, color: Colors.white)),
                       ),
                     ),
                   ]),
@@ -940,20 +1077,27 @@ Widget _buildMapasTab() {
 
   Widget _gradBox(List<Color> colors) => Container(
     decoration: BoxDecoration(gradient: LinearGradient(
-      colors: colors, begin: Alignment.topLeft, end: Alignment.bottomRight)));
+      colors: colors,
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+    )));
 
-  Widget _badge({required IconData icon, required String label, required Color color, bool border = false}) {
+  Widget _badge({required IconData icon, required String label,
+      required Color color, bool border = false}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
         color: color, borderRadius: BorderRadius.circular(20),
-        border: border ? Border.all(color: Colors.white.withValues(alpha: 0.4)) : null,
+        border: border
+            ? Border.all(color: Colors.white.withValues(alpha: 0.4))
+            : null,
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 11, color: Colors.white),
         const SizedBox(width: 4),
         Text(label, style: const TextStyle(
-          fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 0.8)),
+            fontSize: 10, fontWeight: FontWeight.w800,
+            color: Colors.white, letterSpacing: 0.8)),
       ]),
     );
   }
@@ -961,16 +1105,19 @@ Widget _buildMapasTab() {
   Widget _infoChip(IconData icon, String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(color: Colors.black26, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+          color: Colors.black26, borderRadius: BorderRadius.circular(10)),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 11, color: Colors.white),
         const SizedBox(width: 3),
-        Text(text, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Colors.white)),
+        Text(text, style: const TextStyle(fontSize: 11,
+            fontWeight: FontWeight.w600, color: Colors.white)),
       ]),
     );
   }
 
-  Widget _buildSectionHeader(String title, {VoidCallback? onTap, IconData? icon, Color? iconColor}) {
+  Widget _buildSectionHeader(String title,
+      {VoidCallback? onTap, IconData? icon, Color? iconColor}) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 22, 20, 6),
       child: Row(children: [
@@ -986,13 +1133,15 @@ Widget _buildMapasTab() {
           const SizedBox(width: 8),
         ],
         Text(title, style: const TextStyle(
-          fontSize: 17, fontWeight: FontWeight.w800, color: brandDark, letterSpacing: -0.2)),
+            fontSize: 17, fontWeight: FontWeight.w800,
+            color: brandDark, letterSpacing: -0.2)),
         const Spacer(),
         if (onTap != null)
           GestureDetector(
             onTap: onTap,
             child: const Text('Ver todo', style: TextStyle(
-              fontSize: 13, color: brandTeal, fontWeight: FontWeight.w600))),
+                fontSize: 13, color: brandTeal, fontWeight: FontWeight.w600)),
+          ),
       ]),
     );
   }
@@ -1013,7 +1162,10 @@ Widget _buildMapasTab() {
   }
 
   Widget _buildMiniCard(PuntoTuristico p, int index) {
-    final List<Color> colors = [brandTeal, brandEmerald, brandAmber, brandTerracota, brandOrange, brandDark];
+    final List<Color> colors = [
+      brandTeal, brandEmerald, brandAmber,
+      brandTerracota, brandOrange, brandDark,
+    ];
     final color = colors[index % colors.length];
     return GestureDetector(
       onTap: () => _navegarAPuntoDetalle(p),
@@ -1022,29 +1174,34 @@ Widget _buildMapasTab() {
         margin: const EdgeInsets.only(right: 12, bottom: 4),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
-          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.09), blurRadius: 12, offset: const Offset(0, 4))],
+          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.09),
+              blurRadius: 12, offset: const Offset(0, 4))],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(18),
           child: Stack(fit: StackFit.expand, children: [
             if (p.imagenUrl != null && p.imagenUrl!.isNotEmpty)
               Image.network(p.imagenUrl!, fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(color: color.withValues(alpha: 0.8)))
+                  errorBuilder: (_, __, ___) =>
+                      Container(color: color.withValues(alpha: 0.8)))
             else
               Container(color: color.withValues(alpha: 0.8)),
             Container(decoration: BoxDecoration(gradient: LinearGradient(
               begin: Alignment.topCenter, end: Alignment.bottomCenter,
               colors: [Colors.transparent, Colors.black.withValues(alpha: 0.65)]))),
             Positioned(bottom: 10, left: 10, right: 10,
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min, children: [
                 Text(p.nombre,
-                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+                  style: const TextStyle(color: Colors.white, fontSize: 13,
+                      fontWeight: FontWeight.w700),
                   maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 3),
                 const Row(children: [
                   Icon(Icons.star_rounded, size: 11, color: Color(0xFFFFC107)),
                   SizedBox(width: 2),
-                  Text('4.7', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
+                  Text('4.7', style: TextStyle(color: Colors.white,
+                      fontSize: 10, fontWeight: FontWeight.w600)),
                 ]),
               ])),
           ]),
@@ -1069,12 +1226,8 @@ Widget _buildMapasTab() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
       child: ElevatedButton.icon(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const MapaRiesgosScreen()),
-          );
-        },
+        onPressed: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const MapaRiesgosScreen())),
         icon: const Icon(Icons.map_rounded, size: 18),
         label: const Text('Mapa de riesgos'),
         style: ElevatedButton.styleFrom(
@@ -1088,8 +1241,16 @@ Widget _buildMapasTab() {
   }
 
   Widget _buildZonaCard(ZonaRiesgo zona) {
-    final colorMap     = {801: const Color(0xFFFFF3E0), 802: const Color(0xFFFFEBEE), 803: const Color(0xFFFCE4EC)};
-    final iconColorMap = {801: const Color(0xFFF57C00), 802: const Color(0xFFE53935), 803: const Color(0xFFAD1457)};
+    final colorMap     = {
+      801: const Color(0xFFFFF3E0),
+      802: const Color(0xFFFFEBEE),
+      803: const Color(0xFFFCE4EC),
+    };
+    final iconColorMap = {
+      801: const Color(0xFFF57C00),
+      802: const Color(0xFFE53935),
+      803: const Color(0xFFAD1457),
+    };
     final bgColor   = colorMap[zona.idNivelRiesgo]    ?? const Color(0xFFFFF3E0);
     final iconColor = iconColorMap[zona.idNivelRiesgo] ?? const Color(0xFFF57C00);
     return Container(
@@ -1099,18 +1260,22 @@ Widget _buildMapasTab() {
       decoration: BoxDecoration(
         color: bgColor, borderRadius: BorderRadius.circular(16),
         border: Border.all(color: iconColor.withValues(alpha: 0.18)),
-        boxShadow: [BoxShadow(color: iconColor.withValues(alpha: 0.07), blurRadius: 8, offset: const Offset(0, 2))],
+        boxShadow: [BoxShadow(color: iconColor.withValues(alpha: 0.07),
+            blurRadius: 8, offset: const Offset(0, 2))],
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(Icons.location_on_rounded, color: iconColor, size: 18),
         const SizedBox(width: 8),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min, children: [
           Text(zona.nombre,
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: iconColor),
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                color: iconColor),
             maxLines: 1, overflow: TextOverflow.ellipsis),
           const SizedBox(height: 3),
           Text(zona.descripcion,
-            style: TextStyle(fontSize: 11, color: brandDark.withValues(alpha: 0.58), height: 1.3),
+            style: TextStyle(fontSize: 11,
+                color: brandDark.withValues(alpha: 0.58), height: 1.3),
             maxLines: 2, overflow: TextOverflow.ellipsis),
         ])),
       ]),
@@ -1125,35 +1290,47 @@ Widget _buildMapasTab() {
         child: Container(
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            gradient: const LinearGradient(colors: [brandEmerald, brandTeal],
+            gradient: const LinearGradient(
+              colors: [brandEmerald, brandTeal],
               begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(22),
-            boxShadow: [BoxShadow(color: brandTeal.withValues(alpha: 0.36), blurRadius: 18, offset: const Offset(0, 6))],
+            boxShadow: [BoxShadow(color: brandTeal.withValues(alpha: 0.36),
+                blurRadius: 18, offset: const Offset(0, 6))],
           ),
           child: Row(children: [
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
               Row(children: [
                 const Icon(Icons.auto_awesome, size: 14, color: Colors.white70),
                 const SizedBox(width: 5),
-                Text('WALI IA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
-                  color: Colors.white.withValues(alpha: 0.75), letterSpacing: 1.2)),
+                Text('WALI IA', style: TextStyle(fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white.withValues(alpha: 0.75),
+                    letterSpacing: 1.2)),
               ]),
               const SizedBox(height: 6),
               const Text('Crea tu itinerario\nideal con IA',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: Colors.white, height: 1.25)),
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800,
+                    color: Colors.white, height: 1.25)),
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14)),
+                decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14)),
                 child: const Text('Planificar viaje →',
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: brandEmerald)),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700,
+                      color: brandEmerald)),
               ),
             ])),
             const SizedBox(width: 10),
             Container(
               width: 70, height: 70,
-              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.15), shape: BoxShape.circle),
-              child: const Icon(Icons.smart_toy_rounded, size: 38, color: Colors.white),
+              decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.15),
+                  shape: BoxShape.circle),
+              child: const Icon(Icons.smart_toy_rounded,
+                  size: 38, color: Colors.white),
             ),
           ]),
         ),
@@ -1176,17 +1353,21 @@ Widget _buildMapasTab() {
   }
 
   Widget _buildErrorWidget() {
-    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+    return Center(child: Column(mainAxisAlignment: MainAxisAlignment.center,
+        children: [
       const Icon(Icons.wifi_off_rounded, size: 30, color: brandTerracota),
       const SizedBox(height: 8),
-      Text('Sin conexión', style: TextStyle(color: brandDark.withValues(alpha: 0.55), fontWeight: FontWeight.w600)),
+      Text('Sin conexión', style: TextStyle(
+          color: brandDark.withValues(alpha: 0.55), fontWeight: FontWeight.w600)),
       const SizedBox(height: 10),
       GestureDetector(
         onTap: _fetchData,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(color: brandTeal, borderRadius: BorderRadius.circular(12)),
-          child: const Text('Reintentar', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
+          decoration: BoxDecoration(color: brandTeal,
+              borderRadius: BorderRadius.circular(12)),
+          child: const Text('Reintentar', style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
         ),
       ),
     ]));
@@ -1224,10 +1405,12 @@ class _CardItem {
   final bool isRuta;
   final bool iaGenerado;
   final double? precio;
+  final List<String> imagenesPuntos;
 
   const _CardItem({
     required this.id, required this.nombre, required this.descripcion,
-    this.imagenUrl, required this.isRuta, this.iaGenerado = false, this.precio,
+    this.imagenUrl, required this.isRuta, this.iaGenerado = false,
+    this.precio, this.imagenesPuntos = const [],
   });
 
   factory _CardItem.fromPunto(PuntoTuristico p) => _CardItem(
@@ -1236,7 +1419,8 @@ class _CardItem {
 
   factory _CardItem.fromRuta(Ruta r) => _CardItem(
     id: r.id, nombre: r.nombre, descripcion: r.descripcion,
-    isRuta: true, iaGenerado: r.iaGenerado);
+    isRuta: true, iaGenerado: r.iaGenerado,
+    imagenesPuntos: r.imagenesPuntos);
 }
 
 class _SkeletonBox extends StatefulWidget {
@@ -1254,14 +1438,16 @@ class _SkeletonBox extends StatefulWidget {
   State<_SkeletonBox> createState() => _SkeletonBoxState();
 }
 
-class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderStateMixin {
+class _SkeletonBoxState extends State<_SkeletonBox>
+    with SingleTickerProviderStateMixin {
   late AnimationController _ctrl;
   late Animation<double> _anim;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))
+    _ctrl = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 1100))
       ..repeat(reverse: true);
     _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
   }
@@ -1276,13 +1462,386 @@ class _SkeletonBoxState extends State<_SkeletonBox> with SingleTickerProviderSta
       builder: (_, __) => Container(
         width: widget.width, height: widget.height, margin: widget.margin,
         decoration: BoxDecoration(
-          color: Color.lerp(const Color(0xFFDCF0FA), const Color(0xFFBCD8EC), _anim.value),
+          color: Color.lerp(const Color(0xFFDCF0FA),
+              const Color(0xFFBCD8EC), _anim.value),
           borderRadius: BorderRadius.circular(widget.radius),
         ),
       ),
     );
   }
 }
+
+// =============================================================================
+//  MODAL VER TODO
+// =============================================================================
+
+class _VerTodoModal extends StatefulWidget {
+  final List<PuntoTuristico> allPuntos;
+  final List<Ruta> allRutas;
+  final void Function(PuntoTuristico) onSelectPunto;
+  final void Function(Ruta) onSelectRuta;
+
+  const _VerTodoModal({
+    required this.allPuntos,
+    required this.allRutas,
+    required this.onSelectPunto,
+    required this.onSelectRuta,
+  });
+
+  @override
+  State<_VerTodoModal> createState() => _VerTodoModalState();
+}
+
+class _VerTodoModalState extends State<_VerTodoModal> {
+  static const Color brandTeal    = Color(0xFF0F988A);
+  static const Color brandEmerald = Color(0xFF197D61);
+  static const Color brandAmber   = Color(0xFFD27817);
+  static const Color brandDark    = Color(0xFF23373E);
+
+  // 0 = Todos, 1 = Lugares, 2 = Rutas
+  int _filter = 0;
+  String _query = '';
+  final TextEditingController _ctrl = TextEditingController();
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  List<_VerTodoItem> get _items {
+    final q = _query.toLowerCase();
+    final items = <_VerTodoItem>[];
+
+    if (_filter != 2) {
+      for (final p in widget.allPuntos) {
+        if (q.isNotEmpty &&
+            !p.nombre.toLowerCase().contains(q) &&
+            !p.descripcion.toLowerCase().contains(q)) continue;
+        items.add(_VerTodoItem.fromPunto(p));
+      }
+    }
+    if (_filter != 1) {
+      for (final r in widget.allRutas) {
+        if (q.isNotEmpty &&
+            !r.nombre.toLowerCase().contains(q) &&
+            !r.descripcion.toLowerCase().contains(q)) continue;
+        items.add(_VerTodoItem.fromRuta(r));
+      }
+    }
+    return items;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = _items;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.92,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (ctx, scrollCtrl) => Container(
+        decoration: const BoxDecoration(
+          color: Color(0xFFF2FBFF),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(children: [
+          // ── Handle ──
+          Container(
+            width: 36, height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: brandDark.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+
+          // ── Header ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 0, 16, 10),
+            child: Row(children: [
+              const Text('Todos los lugares',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800,
+                    color: brandDark, letterSpacing: -0.3)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    color: brandDark.withValues(alpha: 0.08),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.close_rounded, size: 18,
+                      color: brandDark.withValues(alpha: 0.65)),
+                ),
+              ),
+            ]),
+          ),
+
+          // ── Buscador ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+            child: Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06),
+                    blurRadius: 8, offset: const Offset(0, 2))],
+              ),
+              child: TextField(
+                controller: _ctrl,
+                onChanged: (v) => setState(() => _query = v.trim()),
+                style: const TextStyle(fontSize: 14, color: brandDark),
+                decoration: InputDecoration(
+                  hintText: 'Buscar lugar o ruta...',
+                  hintStyle: TextStyle(color: brandDark.withValues(alpha: 0.38),
+                      fontSize: 14),
+                  prefixIcon: Icon(Icons.search_rounded,
+                      color: brandDark.withValues(alpha: 0.38), size: 20),
+                  suffixIcon: _query.isNotEmpty
+                      ? GestureDetector(
+                          onTap: () {
+                            _ctrl.clear();
+                            setState(() => _query = '');
+                          },
+                          child: Icon(Icons.close_rounded,
+                              color: brandDark.withValues(alpha: 0.38), size: 18))
+                      : null,
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                ),
+              ),
+            ),
+          ),
+
+          // ── Chips ──
+          SizedBox(
+            height: 36,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                _chip('Todos',   0),
+                _chip('Lugares', 1),
+                _chip('Rutas',   2),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 6),
+
+          // ── Contador ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text('${items.length} resultados',
+                style: TextStyle(fontSize: 12,
+                    color: brandDark.withValues(alpha: 0.45),
+                    fontWeight: FontWeight.w500)),
+            ),
+          ),
+
+          // ── Lista ──
+          Expanded(
+            child: items.isEmpty
+                ? Center(child: Text('Sin resultados',
+                    style: TextStyle(
+                        color: brandDark.withValues(alpha: 0.4), fontSize: 14)))
+                : ListView.builder(
+                    controller: scrollCtrl,
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+                    itemCount: items.length,
+                    itemBuilder: (_, i) => _buildItem(items[i]),
+                  ),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _chip(String label, int index) {
+    final isActive = _filter == index;
+    return GestureDetector(
+      onTap: () => setState(() => _filter = index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        margin: const EdgeInsets.only(right: 8, bottom: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        decoration: BoxDecoration(
+          color: isActive ? brandTeal : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: isActive ? brandTeal : brandDark.withValues(alpha: 0.12)),
+        ),
+        child: Center(
+          child: Text(label, style: TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w600,
+            color: isActive ? Colors.white : brandDark.withValues(alpha: 0.65),
+          )),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildItem(_VerTodoItem item) {
+    return GestureDetector(
+      onTap: () {
+        if (item.isRuta) {
+          widget.onSelectRuta(item.ruta!);
+        } else {
+          widget.onSelectPunto(item.punto!);
+        }
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: brandDark.withValues(alpha: 0.06),
+              blurRadius: 8, offset: const Offset(0, 2))],
+        ),
+        child: Row(children: [
+          // ── Thumbnail ──
+          ClipRRect(
+            borderRadius:
+                const BorderRadius.horizontal(left: Radius.circular(16)),
+            child: SizedBox(
+              width: 80, height: 80,
+              child: item.imagenUrl != null && item.imagenUrl!.isNotEmpty
+                  ? Image.network(item.imagenUrl!, fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => _thumbFallback(item))
+                  : _thumbFallback(item),
+            ),
+          ),
+          // ── Info ──
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(item.nombre,
+                    style: const TextStyle(fontSize: 14,
+                        fontWeight: FontWeight.w700, color: brandDark),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 3),
+                  Text(item.descripcion,
+                    style: TextStyle(fontSize: 12,
+                        color: brandDark.withValues(alpha: 0.55), height: 1.35),
+                    maxLines: 2, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  Row(children: [
+                    _itemBadge(item),
+                    if (!item.isRuta && item.precio != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: brandDark.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Bs. ${item.precio!.toStringAsFixed(0)}',
+                          style: const TextStyle(fontSize: 10,
+                              fontWeight: FontWeight.w600, color: brandDark)),
+                      ),
+                    ],
+                  ]),
+                ],
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Icon(Icons.chevron_right_rounded,
+                color: brandDark.withValues(alpha: 0.25), size: 20),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _thumbFallback(_VerTodoItem item) {
+    return Container(
+      color: item.isRuta
+          ? brandAmber.withValues(alpha: 0.25)
+          : brandTeal.withValues(alpha: 0.20),
+      child: Center(child: Icon(
+        item.isRuta ? Icons.route_rounded : Icons.place_rounded,
+        color: item.isRuta ? brandAmber : brandTeal,
+        size: 28,
+      )),
+    );
+  }
+
+  Widget _itemBadge(_VerTodoItem item) {
+    final isRuta = item.isRuta;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: isRuta
+            ? brandAmber.withValues(alpha: 0.15)
+            : brandEmerald.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(
+          isRuta ? Icons.route_rounded : Icons.place_rounded,
+          size: 10,
+          color: isRuta ? brandAmber : brandEmerald,
+        ),
+        const SizedBox(width: 3),
+        Text(
+          isRuta ? (item.iaGenerado ? 'Ruta · IA' : 'Ruta') : 'Lugar',
+          style: TextStyle(
+            fontSize: 10, fontWeight: FontWeight.w600,
+            color: isRuta ? brandAmber : brandEmerald,
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+// =============================================================================
+//  MODELO INTERNO MODAL
+// =============================================================================
+
+class _VerTodoItem {
+  final int id;
+  final String nombre;
+  final String descripcion;
+  final String? imagenUrl;
+  final bool isRuta;
+  final bool iaGenerado;
+  final double? precio;
+  final PuntoTuristico? punto;
+  final Ruta? ruta;
+
+  const _VerTodoItem({
+    required this.id, required this.nombre, required this.descripcion,
+    this.imagenUrl, required this.isRuta, this.iaGenerado = false,
+    this.precio, this.punto, this.ruta,
+  });
+
+  factory _VerTodoItem.fromPunto(PuntoTuristico p) => _VerTodoItem(
+    id: p.id, nombre: p.nombre, descripcion: p.descripcion,
+    imagenUrl: p.imagenUrl, isRuta: false,
+    precio: p.precioNacional, punto: p,
+  );
+
+  factory _VerTodoItem.fromRuta(Ruta r) => _VerTodoItem(
+    id: r.id, nombre: r.nombre, descripcion: r.descripcion,
+    imagenUrl: r.imagenesPuntos.isNotEmpty ? r.imagenesPuntos.first : null,
+    isRuta: true, iaGenerado: r.iaGenerado, ruta: r,
+  );
+}
+
+// =============================================================================
+//  EXTENSION
+// =============================================================================
 
 extension StringExtension on String {
   String capitalize() {
